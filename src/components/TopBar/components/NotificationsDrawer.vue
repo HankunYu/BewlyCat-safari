@@ -3,6 +3,7 @@ import { DrawerType, useBewlyApp } from '~/composables/useAppProvider'
 import { useDark } from '~/composables/useDark'
 import { IFRAME_DARK_MODE_CHANGE } from '~/constants/globalEvents'
 import { settings } from '~/logic'
+import { lockPageScroll, unlockPageScroll } from '~/utils/pageScrollLock'
 
 // TODO: support shortcuts like `Ctrl+Alt+T` to open in new tab, `Esc` to close
 
@@ -23,59 +24,66 @@ const drawerRef = ref<HTMLElement | null>(null)
 const currentUrl = ref<string>(props.url || 'https://message.bilibili.com/')
 const showIframe = ref(false)
 const isIframeLoaded = ref(false)
+const isIframeDisplayReady = ref(false)
 const delayCloseTimer = ref<NodeJS.Timeout | null>(null)
+const revealIframeTimer = ref<NodeJS.Timeout | null>(null)
+const isPageScrollLocked = ref(false)
 
 // 计算属性：只有在显示iframe时才设置src，避免隐藏时提前加载
 const src = computed(() => showIframe.value ? currentUrl.value : undefined)
 
-// 监听黑暗模式变化
-watch(() => isDark.value, (newValue) => {
+function clearRevealIframeTimer() {
+  if (revealIframeTimer.value) {
+    clearTimeout(revealIframeTimer.value)
+    revealIframeTimer.value = null
+  }
+}
+
+function syncIframeDarkModeState() {
   if (iframeRef.value?.contentWindow) {
     try {
       iframeRef.value.contentWindow.postMessage({
         type: IFRAME_DARK_MODE_CHANGE,
-        isDark: newValue,
+        isDark: isDark.value,
+        darkModeBaseColor: settings.value.darkModeBaseColor,
       }, '*')
     }
     catch (error) {
       console.warn('Failed to send dark mode change message to iframe:', error)
     }
   }
+}
+
+function handleIframeLoad() {
+  isIframeLoaded.value = true
+}
+
+// 监听黑暗模式变化
+watch(() => isDark.value, () => {
+  syncIframeDarkModeState()
 })
 
 // 监听深色模式基准颜色变化
-watch(() => settings.value.darkModeBaseColor, (newColor) => {
-  if (iframeRef.value?.contentWindow && isDark.value) {
-    try {
-      iframeRef.value.contentWindow.postMessage({
-        type: IFRAME_DARK_MODE_CHANGE,
-        isDark: isDark.value,
-        darkModeBaseColor: newColor,
-      }, '*')
-    }
-    catch (error) {
-      console.warn('Failed to send dark mode base color change message to iframe:', error)
-    }
-  }
+watch(() => settings.value.darkModeBaseColor, () => {
+  syncIframeDarkModeState()
 })
 
 // 监听iframe加载状态，加载完成后发送初始的黑暗模式状态
 watch(() => isIframeLoaded.value, (newValue) => {
-  if (newValue && iframeRef.value?.contentWindow) {
-    setTimeout(() => {
-      try {
-        // 发送初始的黑暗模式状态
-        iframeRef.value?.contentWindow?.postMessage({
-          type: IFRAME_DARK_MODE_CHANGE,
-          isDark: isDark.value,
-          darkModeBaseColor: settings.value.darkModeBaseColor,
-        }, '*')
-      }
-      catch (error) {
-        console.warn('Failed to send initial dark mode state to iframe:', error)
-      }
-    }, 500) // 稍长的延迟确保iframe完全加载
-  }
+  if (!newValue)
+    return
+
+  // 发送多次深色模式同步消息，减少 iframe 页面初始亮色闪烁
+  syncIframeDarkModeState()
+  setTimeout(syncIframeDarkModeState, 120)
+  setTimeout(syncIframeDarkModeState, 320)
+
+  clearRevealIframeTimer()
+  revealIframeTimer.value = setTimeout(() => {
+    if (showIframe.value && isIframeLoaded.value)
+      isIframeDisplayReady.value = true
+    revealIframeTimer.value = null
+  }, isDark.value ? 360 : 120)
 })
 
 onMounted(() => {
@@ -92,8 +100,14 @@ function handleOpen() {
   console.log('[NotificationsDrawer] handleOpen called')
   show.value = true
   isIframeLoaded.value = false // 重置加载状态
+  isIframeDisplayReady.value = false // 重置显示状态
+  clearRevealIframeTimer()
   setActiveDrawer(DrawerType.NotificationsDrawer) // 设置为当前活跃抽屉
   console.log('[NotificationsDrawer] show.value:', show.value, 'activeDrawer:', activeDrawer.value)
+  if (!isPageScrollLocked.value) {
+    lockPageScroll()
+    isPageScrollLocked.value = true
+  }
 
   if (beforeUrl.value !== props.url) {
     currentUrl.value = props.url
@@ -107,10 +121,14 @@ function handleOpen() {
       console.log('[NotificationsDrawer] Focusing drawer container')
       drawerRef.value?.focus()
     })
-  }, 100) // 短暂延迟，确保抽屉显示动画开始
+  }, 350) // 等待抽屉滑入动画完成(300ms)后再显示iframe，避免动画冲突
 }
 
 onBeforeUnmount(() => {
+  if (isPageScrollLocked.value) {
+    unlockPageScroll()
+    isPageScrollLocked.value = false
+  }
   releaseIframeResources()
 })
 
@@ -119,9 +137,15 @@ async function handleClose() {
   if (delayCloseTimer.value) {
     clearTimeout(delayCloseTimer.value)
   }
+  clearRevealIframeTimer()
+  if (isPageScrollLocked.value) {
+    unlockPageScroll()
+    isPageScrollLocked.value = false
+  }
   show.value = false
   showIframe.value = false // 重置iframe显示状态
   isIframeLoaded.value = false // 重置加载状态
+  isIframeDisplayReady.value = false // 重置显示状态
   setActiveDrawer(DrawerType.None) // 清除活跃抽屉状态
   console.log('[NotificationsDrawer] show.value:', show.value, 'activeDrawer:', activeDrawer.value)
   delayCloseTimer.value = setTimeout(() => {
@@ -312,6 +336,11 @@ onBeforeUnmount(() => {
   console.log('[NotificationsDrawer] onBeforeUnmount - removing keydown listener')
   window.removeEventListener('keydown', handleKeydown, true)
   document.removeEventListener('keydown', handleKeydown, true)
+  clearRevealIframeTimer()
+  if (isPageScrollLocked.value) {
+    unlockPageScroll()
+    isPageScrollLocked.value = false
+  }
   releaseIframeResources()
 })
 
@@ -319,6 +348,11 @@ onDeactivated(() => {
   console.log('[NotificationsDrawer] onDeactivated - removing keydown listener')
   window.removeEventListener('keydown', handleKeydown, true)
   document.removeEventListener('keydown', handleKeydown, true)
+  clearRevealIframeTimer()
+  if (isPageScrollLocked.value) {
+    unlockPageScroll()
+    isPageScrollLocked.value = false
+  }
 })
 
 // 辅助方法：处理点击/鼠标按下，隐藏提示并聚焦抽屉
@@ -438,11 +472,16 @@ function handleFocusDrawer(e?: Event) {
           </div>
 
           <Transition name="fade">
-            <Loading
-              v-if="showIframe && !isIframeLoaded"
-              pos="absolute top-0 right-0" of-hidden
+            <div
+              v-if="showIframe && !isIframeDisplayReady"
+              class="notifications-drawer__loading-layer"
+              pos="absolute top-0 right-0"
+              z-20
               w-full h-full
-            />
+              bg="$bew-bg"
+            >
+              <Loading />
+            </div>
           </Transition>
 
           <Transition name="fade">
@@ -459,8 +498,13 @@ function handleFocusDrawer(e?: Event) {
               max-w-inherit
               :style="{
                 height: 'calc(100%)',
+                opacity: isIframeDisplayReady ? 1 : 0,
+                visibility: isIframeDisplayReady ? 'visible' : 'hidden',
+                pointerEvents: isIframeDisplayReady ? 'auto' : 'none',
+                transition: 'opacity 0.2s ease',
+                backgroundColor: 'var(--bew-bg)',
               }"
-              @load="isIframeLoaded = true"
+              @load="handleIframeLoad"
             />
           </Transition>
         </div>
@@ -491,5 +535,11 @@ function handleFocusDrawer(e?: Event) {
 :global(.photo-imager-container .control-buttons) {
   top: 20px !important; /* 增加顶部距离，避免与抽屉顶部按钮重叠 */
   right: 20px !important;
+}
+
+.notifications-drawer__loading-layer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 </style>

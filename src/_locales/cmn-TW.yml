@@ -162,7 +162,7 @@ settings:
   disable_shadow: 停用陰影
   link_opening_behavior_opt:
     current_tab: 目前索引標籤
-    current_tab_if_not_homepage: 不在首頁則在目前索引標籤開啓，否則在新索引標籤
+    current_tab_if_not_homepage: 首頁新分頁，其他目前分頁
     background: 後台打開
     new_tab: 新索引標籤
     drawer: 抽屜開啓
@@ -528,10 +528,26 @@ settings:
     toggle_follow_desc: 在視頻頁切換關注UP主狀態
   clean_url_argument: 清理URL追蹤參數
   clean_url_argument_desc: 自動清理URL中的追蹤參數，使連結更加簡潔
+
+  # Clean Share Link
+  group_clean_share_link: 分享連結淨化
+  enable_clean_share_link: 啓用分享連結淨化
+  enable_clean_share_link_desc: >
+    啓用後，分享連結將自動移除追蹤參數，並可選擇是否包含影片標題。
+    此功能適用於 BewlyCat 的複製連結功能，同時也會攔截 Bilibili 原生分享按鈕的複製內容。
+  clean_share_link_include_title: 分享時包含影片標題
+  clean_share_link_include_title_desc: >
+    分享時在連結前新增影片標題，例如 "影片標題 https://www.bilibili.com/video/BVxxx"
+  clean_share_link_remove_tracking_params: 移除連結中的追蹤參數
+  clean_share_link_remove_tracking_params_desc: >
+    移除分享連結中的追蹤參數，如 spm_id_from、vd_source、share_source 等。
+
   show_ip_location: 顯示IP歸屬地
   show_ip_location_desc: 在視頻/動態評論區顯示IP歸屬地
   show_sex: 顯示使用者性別
   show_sex_desc: 在視頻/動態評論區顯示使用者性別
+  show_comment_host_tag: 顯示樓主標示
+  show_comment_host_tag_desc: 在評論回覆詳情頁標示樓主
   adjust_comment_image_height: 調整評論區圖片高度
   adjust_comment_image_height_desc: 自動調整評論區圖片高度以匹配實際長寬比，避免圖片變形
   video_player_scroll: 調整顯示模式後滾動
@@ -667,6 +683,8 @@ topbar:
     my_courses: 我的課程
     bilibili_premium_rewards: 大會員福利領取
     log_out: 登出
+    last_login_time: 最後登入
+    last_login_location: 登入地點
   noti_dropdown:
     replys: 回覆留言
     mentions: 提及我的
@@ -708,6 +726,7 @@ video_card:
     open_in_current_tab: 目前索引標籤開啓
     open_in_drawer: 抽屜開啓
     copy_video_link: 複製影片連結
+    copy_clean_video_link: 複製乾淨連結
     copy_bv_number: 複製 BV 號
     copy_av_number: 複製 AV 號
     view_the_original_cover: 檢視封面
@@ -800,7 +819,7 @@ watch_later:
   remove_watched_videos_confirm: |-
     要移除看過的影片嗎？
     此操作無法復原，你確定要移除看過的影片嗎？
-  play_video: 播放
+  play_video: 移除並進入影片頁
   play_in_watch_later: 清單播放
   remove_from_watch_later: 移除
 search_bar:

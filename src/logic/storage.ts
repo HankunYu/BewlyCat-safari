@@ -161,6 +161,7 @@ export interface Settings {
   enableHorizontalScrolling: boolean
   showIPLocation: boolean // 添加显示IP归属地设置项
   showSex: boolean // 添加显示性别设置项
+  showCommentHostTag: boolean // 显示评论回复详情页楼主标识
   adjustCommentImageHeight: boolean // 调整评论区图片高度以匹配实际比例
   enlargeFavoriteDialog: boolean // 视频页收藏夹放大样式增强
   externalWatchLaterButton: boolean // 稍后再看按钮外置
@@ -189,6 +190,11 @@ export interface Settings {
   blockAds: boolean
   blockTopSearchPageAds: boolean
   cleanUrlArgument: boolean // 清理URL追踪参数
+
+  // Clean Share Link
+  enableCleanShareLink: boolean
+  cleanShareLinkIncludeTitle: boolean
+  cleanShareLinkRemoveTrackingParams: boolean
 
   enableVideoCtrlBarOnVideoCard: boolean
   hoverVideoCardDelayed: boolean
@@ -360,6 +366,7 @@ export const originalSettings: Settings = {
   enableHorizontalScrolling: false,
   showIPLocation: true, // 默认启用IP归属地显示
   showSex: true, // 默认启用性别显示
+  showCommentHostTag: true, // 默认启用楼主标识显示
   adjustCommentImageHeight: true, // 默认启用评论图片高度调整
   enlargeFavoriteDialog: false, // 默认关闭收藏夹放大样式
   externalWatchLaterButton: false, // 默认关闭稍后再看按钮外置
@@ -386,6 +393,11 @@ export const originalSettings: Settings = {
   blockAds: false,
   blockTopSearchPageAds: false,
   cleanUrlArgument: true, // 默认开启清理URL追踪参数
+
+  // Clean Share Link
+  enableCleanShareLink: false,
+  cleanShareLinkIncludeTitle: false,
+  cleanShareLinkRemoveTrackingParams: true,
 
   enableVideoPreview: true,
   enableVideoCtrlBarOnVideoCard: false,

@@ -162,7 +162,7 @@ settings:
   disable_shadow: 閂咗陰影
   link_opening_behavior_opt:
     current_tab: 目前分頁
-    current_tab_if_not_homepage: 唔喺主頁就喺目前分頁度開啓，否則開新嘅分頁
+    current_tab_if_not_homepage: 主頁開新分頁，其他用目前分頁
     new_tab: 新開分頁
     drawer: 喺櫃桶度開啓
     background: 後臺打開（若然得嘅話）
@@ -393,6 +393,20 @@ settings:
     showOnScroll: 捲動嗰陣顯示
   clean_url_argument: 清理 URL 追蹤參數
   clean_url_argument_desc: 自動清理 URL 嘅最終參數，令到連結更加企理。
+
+  # Clean Share Link
+  group_clean_share_link: 分享連結淨化
+  enable_clean_share_link: 使用分享連結淨化
+  enable_clean_share_link_desc: >
+    開咗之後，分享連結會自動移除追蹤參數，仲可以揀要唔要加埋影片標題。
+    呢個功能適用於 BewlyCat 嘅複製連結功能，同時亦會攔截 Bilibili 原生分享掣嘅複製內容。
+  clean_share_link_include_title: 分享時加埋影片標題
+  clean_share_link_include_title_desc: >
+    分享嗰陣喺連結前面加埋影片標題，例如 "影片標題 https://www.bilibili.com/video/BVxxx"
+  clean_share_link_remove_tracking_params: 移除連結入面嘅追蹤參數
+  clean_share_link_remove_tracking_params_desc: >
+    移除分享連結入面嘅追蹤參數，好似 spm_id_from、vd_source、share_source 噉。
+
   keep_collection_video_default_mode: 合集影片保持預設模式
   keep_collection_video_default_mode_desc: 啟用嗰陣，合集影片會一直用預設播放器模式，唔會套用寬螢幕或者全螢幕設定
   auto_exit_fullscreen_on_end: 全螢幕/網頁全螢幕播完後自動退出
@@ -515,6 +529,8 @@ settings:
   show_ip_location_desc: 喺影片/動向頁留言區顯示 IP 歸屬地。
   show_sex: 顯示用戶性別
   show_sex_desc: 喺影片/動向頁留言區顯示用戶性別。
+  show_comment_host_tag: 顯示樓主標示
+  show_comment_host_tag_desc: 喺留言回覆詳情頁標示樓主。
   video_player_scroll: 校好顯示模式後自動轆到合適嘅位置
   video_player_scroll_desc: 啓用後，若果顯示模式係闊螢幕或預設嗰陣，會自動轆到合適嘅位置。
   enlarge_favorite_dialog: 放大收藏彈窗
@@ -601,6 +617,8 @@ topbar:
     my_courses: 我嘅課程
     log_out: 登出
     bilibili_premium_rewards: 大會員福利領取
+    last_login_time: 最後登入
+    last_login_location: 登入地點
   noti_dropdown:
     replys: 覆我
     mentions: 提我
@@ -642,6 +660,7 @@ video_card:
     open_in_current_tab: 目前分頁開啓
     open_in_drawer: 櫃桶開啓
     copy_video_link: 複製影片連結
+    copy_clean_video_link: 複製乾淨連結
     copy_bv_number: 複製 BV 號
     copy_av_number: 複製 AV 號
     view_the_original_cover: 睇吓封面
@@ -729,7 +748,7 @@ watch_later:
   remove_watched_videos_confirm: |-
     係咪要剷走你睇過啲片呀？
     噉做冇得返轉頭噃，你確定要剷走你睇過啲片？
-  play_video: 播片
+  play_video: 剷走兼入去影片頁
   play_in_watch_later: 清單播
   remove_from_watch_later: 剷走
 search_bar:

@@ -236,15 +236,15 @@ function transformWebVideo(item: VideoItem): VideoCardDisplayData {
     title: decodeHtmlEntities(item.title),
     cover: item.pic,
     author: {
-      name: decodeHtmlEntities(item.owner.name),
-      authorFace: item.owner.face,
+      name: decodeHtmlEntities(item.owner?.name || ''),
+      authorFace: item.owner?.face || '',
       followed: !!item.is_followed,
-      mid: item.owner.mid,
+      mid: item.owner?.mid || 0,
     },
     tag: decodeHtmlEntities(item?.rcmd_reason?.content),
-    view: item.stat.view,
-    danmaku: item.stat.danmaku,
-    like: item.stat.like,
+    view: item.stat?.view || 0,
+    danmaku: item.stat?.danmaku || 0,
+    like: item.stat?.like,
     publishedTimestamp: item.pubdate,
     bvid: item.bvid,
     cid: item.cid,
@@ -293,6 +293,41 @@ function transformAppVideo(item: AppVideoItem): VideoCardDisplayData {
     type,
     threePointV2: item?.three_point_v2 || [],
   }
+}
+
+function getWebVideoKey(item: VideoItem): string {
+  const bvid = item.bvid?.trim()
+  if (bvid)
+    return bvid
+  return `${item.id}`
+}
+
+function buildLastShowlist(items: VideoItem[]): string {
+  const parts: string[] = []
+  const seen = new Set<number>()
+
+  items.forEach((item) => {
+    if (!item?.id || item.goto !== 'av' || seen.has(item.id))
+      return
+
+    seen.add(item.id)
+    const followedFlag = item.is_followed ? 'n_' : ''
+    parts.push(`av_${followedFlag}${item.id}`)
+  })
+
+  return parts.join('_')
+}
+
+function getLastShowlistFromList(list: VideoElement[], limit: number): string {
+  const items = list
+    .map(video => video.item)
+    .filter((item): item is VideoItem => !!item && !!item.id)
+
+  return buildLastShowlist(items.slice(-limit))
+}
+
+function getWebFetchRow(list: VideoElement[]): number {
+  return list.reduce((count, video) => (video.item ? count + 1 : count), 0)
 }
 
 watch(() => settings.value.recommendationMode, () => {
@@ -520,10 +555,24 @@ async function getRecommendVideos() {
 
     const beforeLoadCount = videoList.value.filter(video => video.item).length
 
+    // 使用当前的 refreshIdx，只在成功时才递增
+    const currentRefreshIdx = refreshIdx.value
+    const fetchRow = getWebFetchRow(videoList.value)
+    const lastShowlist = getLastShowlistFromList(videoList.value, PAGE_SIZE)
+
     const response: forYouResult = await api.video.getRecommendVideos({
-      fresh_idx: refreshIdx.value++,
+      fresh_idx: currentRefreshIdx,
+      fresh_idx_1h: currentRefreshIdx,
       ps: PAGE_SIZE,
+      fetch_row: fetchRow > 0 ? fetchRow : undefined,
+      last_showlist: lastShowlist || undefined,
     })
+
+    if (!response) {
+      console.error('Failed to load web recommendations: Response is undefined')
+      noMoreContent.value = true
+      return
+    }
 
     if (!response.data) {
       noMoreContent.value = true
@@ -531,17 +580,41 @@ async function getRecommendVideos() {
     }
 
     if (response.code === 0) {
+      // 只在成功时递增 refreshIdx
+      refreshIdx.value++
+
       const resData = [] as VideoItem[]
+      const existingIds = new Set<string>()
+
+      videoList.value.forEach((video) => {
+        if (video.item)
+          existingIds.add(getWebVideoKey(video.item))
+      })
 
       response.data.item.forEach((item: VideoItem) => {
-        if (!filterFunc.value || filterFunc.value(item))
-          resData.push(item)
+        // 过滤掉广告卡片
+        if (item.goto === 'ad')
+          return
+
+        // 过滤掉缺少必要字段的数据（owner 或 stat 为 null）
+        if (!item.owner || !item.stat)
+          return
+
+        if (filterFunc.value && !filterFunc.value(item))
+          return
+
+        const itemKey = getWebVideoKey(item)
+        if (existingIds.has(itemKey))
+          return
+
+        existingIds.add(itemKey)
+        resData.push(item)
       })
 
       // when videoList has length property, it means it is the first time to load
       if (!beforeLoadCount) {
         videoList.value = resData.map(item => ({
-          uniqueId: `${item.id}`,
+          uniqueId: getWebVideoKey(item),
           item,
           displayData: transformWebVideo(item),
         }))
@@ -552,7 +625,7 @@ async function getRecommendVideos() {
           // skep the `findFirstEmptyItemIndex` check to enhance the performance
           if (!filterFunc.value) {
             videoList.value.push({
-              uniqueId: `${item.id}`,
+              uniqueId: getWebVideoKey(item),
               item,
               displayData: transformWebVideo(item),
             })
@@ -561,14 +634,14 @@ async function getRecommendVideos() {
             const findFirstEmptyItemIndex = videoList.value.findIndex(video => !video.item)
             if (findFirstEmptyItemIndex !== -1) {
               videoList.value[findFirstEmptyItemIndex] = {
-                uniqueId: `${item.id}`,
+                uniqueId: getWebVideoKey(item),
                 item,
                 displayData: transformWebVideo(item),
               }
             }
             else {
               videoList.value.push({
-                uniqueId: `${item.id}`,
+                uniqueId: getWebVideoKey(item),
                 item,
                 displayData: transformWebVideo(item),
               })
@@ -591,12 +664,17 @@ async function getRecommendVideos() {
     else if (response.code === 62011) {
       needToLoginFirst.value = true
     }
+    else {
+      // 其他错误码也应该停止加载，避免无限重试
+      console.error('API returned error code:', response.code, response.message)
+      noMoreContent.value = true
+    }
   }
   finally {
     const filledItems = videoList.value.filter(video => video.item)
     videoList.value = filledItems
 
-    if (!needToLoginFirst.value) {
+    if (!needToLoginFirst.value && !noMoreContent.value) {
       await nextTick()
 
       const hasScrollbar = await haveScrollbar()
@@ -627,6 +705,13 @@ async function getAppRecommendVideos() {
     return
   }
 
+  // 检查是否有有效的 access token
+  if (!appAuthTokens.value.accessToken) {
+    console.warn('APP 推荐模式需要登录，access token 为空')
+    needToLoginFirst.value = true
+    return
+  }
+
   const batchesToLoad = APP_LOAD_BATCHES.value
   const beforeLoadCount = appVideoList.value.length
 
@@ -645,6 +730,11 @@ async function getAppRecommendVideos() {
         appkey: TVAppKey.appkey,
         idx: lastIdx,
       })
+
+      if (!response) {
+        console.error('Failed to load batch', batch, 'Response is undefined')
+        break
+      }
 
       if (response.code === 0) {
         response.data.items.forEach((item: AppVideoItem) => {

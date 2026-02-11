@@ -164,7 +164,7 @@ settings:
   disable_shadow: 禁用阴影
   link_opening_behavior_opt:
     current_tab: 当前标签页
-    current_tab_if_not_homepage: 不在首页则当前标签页打开，否则在新标签页
+    current_tab_if_not_homepage: 首页新标签页，其他当前页
     background: 后台打开（如果可以的话）
     new_tab: 新标签页
     drawer: 抽屉打开
@@ -536,10 +536,26 @@ settings:
     toggle_follow_desc: 在视频页切换关注UP主状态
   clean_url_argument: 清理URL追踪参数
   clean_url_argument_desc: 自动清理URL中的追踪参数，使链接更加简洁
+
+  # Clean Share Link
+  group_clean_share_link: 分享链接净化
+  enable_clean_share_link: 启用分享链接净化
+  enable_clean_share_link_desc: >
+    启用后，分享链接将自动移除追踪参数，并可选择是否包含视频标题。
+    此功能适用于 BewlyCat 的复制链接功能，同时也会拦截 Bilibili 原生分享按钮的复制内容。
+  clean_share_link_include_title: 分享时包含视频标题
+  clean_share_link_include_title_desc: >
+    分享时在链接前添加视频标题，例如 "视频标题 https://www.bilibili.com/video/BVxxx"
+  clean_share_link_remove_tracking_params: 移除链接中的追踪参数
+  clean_share_link_remove_tracking_params_desc: >
+    移除分享链接中的追踪参数，如 spm_id_from、vd_source、share_source 等。
+
   show_ip_location: 显示IP归属地
   show_ip_location_desc: 在视频/动态评论区显示IP归属地
   show_sex: 显示用户性别
   show_sex_desc: 在视频/动态评论区显示用户性别
+  show_comment_host_tag: 显示楼主标识
+  show_comment_host_tag_desc: 在评论回复详情页中标注楼主
   adjust_comment_image_height: 调整评论区图片高度
   adjust_comment_image_height_desc: 自动调整评论区图片高度以匹配实际长宽比，避免图片变形
   volume_normalization:
@@ -652,6 +668,8 @@ topbar:
     my_courses: 我的课程
     bilibili_premium_rewards: 大会员福利领取
     log_out: 退出登录
+    last_login_time: 最后登录
+    last_login_location: 登录地点
   noti_dropdown:
     replys: 回复我的
     mentions: 提到我的
@@ -693,6 +711,7 @@ video_card:
     open_in_current_tab: 当前标签页打开
     open_in_drawer: 抽屉打开
     copy_video_link: 复制视频链接
+    copy_clean_video_link: 复制干净链接
     copy_bv_number: 复制 BV 号
     copy_av_number: 复制 AV 号
     view_the_original_cover: 查看封面
@@ -785,7 +804,7 @@ watch_later:
   remove_watched_videos_confirm: |-
     要清除已观看的视频吗？
     该操作无法撤销，你确定要清除已观看的视频吗？
-  play_video: 播放
+  play_video: 移除并进入视频页
   play_in_watch_later: 列表播放
   remove_from_watch_later: 移除
 search_bar:
