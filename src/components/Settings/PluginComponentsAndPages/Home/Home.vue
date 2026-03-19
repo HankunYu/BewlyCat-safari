@@ -306,6 +306,20 @@ function handleToggleHomeTab(tab: any) {
           <Radio v-model="settings.enableFilterByViewCount" />
         </div>
       </SettingsItem>
+      <SettingsItem :title="$t('settings.filter_by_like_count')" :desc="$t('settings.filter_by_like_count_desc')">
+        <div flex="~ justify-end" w-full>
+          <Input
+            v-if="settings.enableFilterByLikeCount"
+            v-model="settings.filterByLikeCount" type="number" :min="1" :max="1000000"
+            flex-1
+          >
+            <template #suffix>
+              {{ $t('settings.filter_by_like_count_unit') }}
+            </template>
+          </Input>
+          <Radio v-model="settings.enableFilterByLikeCount" />
+        </div>
+      </SettingsItem>
       <SettingsItem :title="$t('settings.filter_by_duration')" :desc="$t('settings.filter_by_duration_desc')">
         <div flex="~ justify-end" w-full>
           <Input
@@ -400,10 +414,10 @@ function handleToggleHomeTab(tab: any) {
       <SettingsItem :title="$t('settings.following_inactive_days')" :desc="$t('settings.following_inactive_days_desc')">
         <Input
           v-model="settings.followingInactiveDays" type="number" :min="1" :max="365"
-          w-100px
+          w-120px
         >
           <template #suffix>
-            {{ $t('common.days') }}
+            <span text="sm $bew-text-2" whitespace-nowrap>{{ $t('common.days') }}</span>
           </template>
         </Input>
       </SettingsItem>
