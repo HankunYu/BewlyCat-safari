@@ -55,6 +55,8 @@ interface SearchRecommendationResponse {
   data: SearchRecommendationItem
 }
 
+type KeyboardSelectionMode = 'none' | 'suggestions' | 'history'
+
 const props = defineProps<{
   darkenOnFocus?: boolean
   blurredOnFocus?: boolean
@@ -75,9 +77,9 @@ const isFocus = ref<boolean>(false)
 const keyword = ref<string>(props.modelValue ?? '')
 const suggestions = reactive<SuggestionItem[]>([])
 const selectedIndex = ref<number>(-1)
+const keyboardSelectionMode = ref<KeyboardSelectionMode>('none')
+const originalKeywordBeforeKeyboardSelection = ref<string>(keyword.value)
 const searchHistory = shallowRef<HistoryItem[]>([])
-const historyItemRef = ref<HTMLElement[]>([])
-const suggestionItemRef = ref<HTMLElement[]>([])
 // 热搜相关状态
 const hotSearchList = ref<HotSearchItem[]>([])
 const isLoadingHotSearch = ref<boolean>(false)
@@ -87,6 +89,24 @@ const isLoadingSearchRecommendation = ref<boolean>(false)
 
 const searchMode = computed(() => props.searchBehavior ?? 'navigate')
 const isInPlaceSearch = computed(() => searchMode.value === 'stay')
+const visibleKeyboardSelectionMode = computed<KeyboardSelectionMode>(() => {
+  if (isFocus.value && keyword.value.trim().length > 0 && suggestions.length !== 0)
+    return 'suggestions'
+  if (isFocus.value && keyword.value.length === 0 && searchHistory.value.length !== 0)
+    return 'history'
+  return 'none'
+})
+const shouldShowSearchDropdown = computed(() => {
+  if (!isFocus.value)
+    return false
+
+  const hasHotSearch = (props.showHotSearch ?? settings.value.showHotSearchInTopBar) && hotSearchList.value.length > 0
+  const hasSearchHistory = searchHistory.value.length !== 0
+  if (!hasHotSearch && !hasSearchHistory)
+    return false
+
+  return keyword.value.length === 0 || keyboardSelectionMode.value === 'history'
+})
 
 // 计算 placeholder 显示文本
 const placeholderText = computed(() => {
@@ -117,11 +137,16 @@ const shouldHandleInCurrentPage = computed(() => {
 
 watch(() => props.modelValue, (value) => {
   const next = value ?? ''
-  if (next !== keyword.value)
+  if (next !== keyword.value) {
+    resetKeyboardSelection()
     keyword.value = next
+  }
 })
 
 watch(keyword, (value) => {
+  if (selectedIndex.value === -1)
+    originalKeywordBeforeKeyboardSelection.value = value
+
   if (value !== (props.modelValue ?? ''))
     emit('update:modelValue', value)
 })
@@ -151,6 +176,7 @@ watch(isFocus, async (focus) => {
 // 点击外部关闭搜索框
 onClickOutside(searchWrapRef, () => {
   isFocus.value = false
+  resetKeyboardSelection()
 })
 
 // 加载热搜数据
@@ -269,11 +295,11 @@ onKeyStroke('Escape', (e: KeyboardEvent) => {
   e.preventDefault()
   keywordRef.value?.blur()
   isFocus.value = false
+  resetKeyboardSelection()
   console.log('[SearchBar] Blurred search input')
 }, { target: keywordRef })
 
 const handleKeywordInput = useDebounceFn(() => {
-  selectedIndex.value = -1
   if (keyword.value.trim().length > 0) {
     api.search.getSearchSuggestion({
       term: keyword.value,
@@ -291,6 +317,7 @@ const handleKeywordInput = useDebounceFn(() => {
 
 function handleNativeInput(event: Event) {
   const value = (event.target as HTMLInputElement).value
+  resetKeyboardSelection()
   keyword.value = value
   handleKeywordInput()
 }
@@ -348,6 +375,7 @@ async function navigateToSearchResultPage(rawKeyword: string) {
   if (isInPlaceSearch.value) {
     emit('search', normalized)
     isFocus.value = false
+    resetKeyboardSelection()
     return
   }
 
@@ -355,6 +383,7 @@ async function navigateToSearchResultPage(rawKeyword: string) {
   if (shouldHandleInCurrentPage.value) {
     emit('search', normalized)
     isFocus.value = false
+    resetKeyboardSelection()
     return
   }
 
@@ -377,6 +406,8 @@ async function navigateToSearchResultPage(rawKeyword: string) {
 
     window.open(searchUrl, target)
   }
+
+  resetKeyboardSelection()
 }
 
 function handleKeywordLinkClick(value: string, event: MouseEvent) {
@@ -390,34 +421,62 @@ async function handleDelete(value: string) {
   searchHistory.value = await removeSearchHistory(value)
 }
 
+function getKeyboardSelectionItems(mode: KeyboardSelectionMode) {
+  if (mode === 'suggestions')
+    return suggestions.map(item => item.value)
+  if (mode === 'history')
+    return searchHistory.value.map(item => item.value)
+  return []
+}
+
+function resetKeyboardSelection(options: { restoreKeyword?: boolean } = {}) {
+  const { restoreKeyword = false } = options
+  const originalKeyword = originalKeywordBeforeKeyboardSelection.value
+
+  selectedIndex.value = -1
+  keyboardSelectionMode.value = 'none'
+
+  if (restoreKeyword)
+    keyword.value = originalKeyword
+}
+
+function getKeyboardSelectionContext() {
+  const mode = selectedIndex.value === -1
+    ? visibleKeyboardSelectionMode.value
+    : keyboardSelectionMode.value
+
+  if (mode === 'none')
+    return null
+
+  const items = getKeyboardSelectionItems(mode)
+  if (items.length === 0) {
+    resetKeyboardSelection()
+    return null
+  }
+
+  if (selectedIndex.value === -1)
+    originalKeywordBeforeKeyboardSelection.value = keyword.value
+
+  keyboardSelectionMode.value = mode
+  return { items, mode }
+}
+
 function handleKeyUp(e: KeyboardEvent) {
   // Skip the key event triggered by IME
   if (e.isComposing)
     return
 
-  if (selectedIndex.value <= 0) {
-    selectedIndex.value = 0
+  const context = getKeyboardSelectionContext()
+  if (!context || selectedIndex.value === -1)
+    return
+
+  if (selectedIndex.value === 0) {
+    resetKeyboardSelection({ restoreKeyword: true })
     return
   }
 
   selectedIndex.value--
-
-  if (isFocus.value && suggestions.length !== 0)
-    keyword.value = suggestions[selectedIndex.value].value
-  else if (isFocus.value && searchHistory.value.length !== 0)
-    keyword.value = searchHistory.value[selectedIndex.value].value
-
-  suggestionItemRef.value.forEach((item, index) => {
-    if (index === selectedIndex.value)
-      item.classList.add('active')
-    else item.classList.remove('active')
-  })
-
-  historyItemRef.value.forEach((item, index) => {
-    if (index === selectedIndex.value)
-      item.classList.add('active')
-    else item.classList.remove('active')
-  })
+  keyword.value = context.items[selectedIndex.value]
 }
 
 function handleKeyDown(e: KeyboardEvent) {
@@ -425,43 +484,18 @@ function handleKeyDown(e: KeyboardEvent) {
   if (e.isComposing)
     return
 
-  let isShowSuggestion = false
-  if (isFocus.value && suggestions.length !== 0)
-    isShowSuggestion = true
-  else if (isFocus.value && !keyword.value && searchHistory.value.length !== 0)
-    isShowSuggestion = false
-
-  if (
-    isShowSuggestion
-    && selectedIndex.value >= suggestions.length - 1
-  ) {
-    selectedIndex.value = suggestions.length - 1
+  const context = getKeyboardSelectionContext()
+  if (!context)
     return
-  }
-  if (
-    !isShowSuggestion
-    && selectedIndex.value >= searchHistory.value.length - 1
-  ) {
-    selectedIndex.value = searchHistory.value.length - 1
+
+  if (selectedIndex.value >= context.items.length - 1) {
+    selectedIndex.value = context.items.length - 1
+    keyword.value = context.items[selectedIndex.value]
     return
   }
 
   selectedIndex.value++
-  keyword.value = isShowSuggestion
-    ? suggestions[selectedIndex.value].value
-    : searchHistory.value[selectedIndex.value].value
-
-  suggestionItemRef.value.forEach((item, index) => {
-    if (index === selectedIndex.value)
-      item.classList.add('active')
-    else item.classList.remove('active')
-  })
-
-  historyItemRef.value.forEach((item, index) => {
-    if (index === selectedIndex.value)
-      item.classList.add('active')
-    else item.classList.remove('active')
-  })
+  keyword.value = context.items[selectedIndex.value]
 }
 
 function handleKeyEnter(e: KeyboardEvent) {
@@ -482,6 +516,13 @@ function handleFocusOut(event: FocusEvent) {
     return
 
   isFocus.value = false
+  resetKeyboardSelection()
+}
+
+function handleClearKeyword() {
+  resetKeyboardSelection()
+  keyword.value = ''
+  suggestions.length = 0
 }
 </script>
 
@@ -528,6 +569,7 @@ function handleFocusOut(event: FocusEvent) {
       <Transition name="focus-character">
         <img
           v-show="focusedCharacter && isFocus" :src="focusedCharacter"
+          class="focus-character-image"
           width="100" object-contain pos="absolute right-0 bottom-40px"
         >
       </Transition>
@@ -536,14 +578,19 @@ function handleFocusOut(event: FocusEvent) {
         ref="keywordRef"
         :value="keyword"
         :placeholder="placeholderText"
+        autocomplete="off"
+        autocapitalize="off"
+        autocorrect="off"
         class="group"
+        enterkeyhint="search"
+        name="search"
         rounded="60px"
         p="l-6 r-18 y-3"
         h-inherit
+        spellcheck="false"
         text="$b-search-bar-normal-text-color group-focus-within:$b-search-bar-focus-text-color group-hover:$b-search-bar-hover-text-color"
         un-border="1 solid $bew-border-color"
         transition="all duration-300"
-        type="text"
         @focus="isFocus = true"
         @input="handleNativeInput"
         @keydown.enter.stop="handleKeyEnter"
@@ -556,7 +603,7 @@ function handleFocusOut(event: FocusEvent) {
         pos="absolute right-12" bg="$bew-fill-1 hover:$bew-fill-2" text="xs" rounded-10
         p-1
         flex="~ items-center justify-between"
-        @click="keyword = ''"
+        @click="handleClearKeyword"
       >
         <div i-ic-baseline-clear shrink-0 />
       </button>
@@ -580,11 +627,7 @@ function handleFocusOut(event: FocusEvent) {
 
     <Transition name="result-list">
       <div
-        v-if="
-          isFocus
-            && keyword.length === 0
-            && (searchHistory.length !== 0 || ((showHotSearch ?? settings.showHotSearchInTopBar) && hotSearchList.length > 0))
-        "
+        v-if="shouldShowSearchDropdown"
         id="search-dropdown"
       >
         <!-- 热搜区块 -->
@@ -650,11 +693,12 @@ function handleFocusOut(event: FocusEvent) {
 
           <div class="history-item-container p2 flex flex-wrap gap-x-3 gap-y-3">
             <ALink
-              v-for="item in searchHistory" :key="item.timestamp" ref="historyItemRef"
+              v-for="(item, index) in searchHistory" :key="item.timestamp"
               :href="buildKeywordHref(item.value)"
               type="searchBar"
               :custom-click-event="true"
               class="history-item group"
+              :class="{ active: keyboardSelectionMode === 'history' && selectedIndex === index }"
               flex justify-between items-center
               @click="handleKeywordLinkClick(item.value, $event)"
             >
@@ -682,8 +726,8 @@ function handleFocusOut(event: FocusEvent) {
         <div
           v-for="(item, index) in suggestions"
           :key="index"
-          ref="suggestionItemRef"
           class="suggestion-item"
+          :class="{ active: keyboardSelectionMode === 'suggestions' && selectedIndex === index }"
           @click="navigateToSearchResultPage(item.value)"
         >
           <span v-html="DOMPurify.sanitize(item.name)" />
@@ -753,8 +797,20 @@ function handleFocusOut(event: FocusEvent) {
   }
 
   .search-bar {
+    .focus-character-image {
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    > button {
+      z-index: 2;
+    }
+
     input {
       @include card-content;
+      appearance: none;
+      position: relative;
+      z-index: 1;
 
       &:hover {
         --uno: "bg-$b-search-bar-hover-color";
@@ -851,6 +907,10 @@ function handleFocusOut(event: FocusEvent) {
         .history-item {
           --uno: "relative cursor-pointer duration-300";
           --uno: "py-2 px-6 bg-$bew-fill-1 hover:bg-$bew-theme-color-20 hover:text-$bew-theme-color rounded-$bew-radius-half";
+
+          &.active {
+            --uno: "bg-$bew-fill-2 text-$bew-theme-color shadow-[var(--bew-shadow-1),var(--bew-shadow-edge-glow-1)]";
+          }
         }
       }
     }

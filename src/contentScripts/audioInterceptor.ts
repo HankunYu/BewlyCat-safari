@@ -25,9 +25,12 @@ interface ManagedVideoListeners {
   video: HTMLVideoElement
   onPlay: () => void
   onPause: () => void
+  onEnded: () => void
   onLoadStart: () => void
   onEmptied: () => void
 }
+
+type AudioGraphMode = 'disconnected' | 'processing' | 'bypass'
 
 const PLAYER_VIDEO_SELECTOR = [
   '#bilibiliPlayer video',
@@ -119,6 +122,7 @@ function getGainControlProfile() {
 // Audio Context and Nodes
 let audioContext: AudioContext | null = null
 let audioNodes: AudioNodeBundle | null = null
+let audioGraphMode: AudioGraphMode = 'disconnected'
 const audioNodeCache = new WeakMap<HTMLVideoElement, AudioNodeBundle>()
 
 // Analysis State
@@ -237,8 +241,10 @@ function safelyDisconnect(node: AudioNode | null | undefined) {
 function disconnectCurrentGraph() {
   stopLoudnessAnalysis()
 
-  if (!audioNodes)
+  if (!audioNodes) {
+    audioGraphMode = 'disconnected'
     return
+  }
 
   safelyDisconnect(audioNodes.source)
   safelyDisconnect(audioNodes.analysisHighpass)
@@ -246,11 +252,17 @@ function disconnectCurrentGraph() {
   safelyDisconnect(audioNodes.analyser)
   safelyDisconnect(audioNodes.adaptiveGain)
   safelyDisconnect(audioNodes.limiter)
+  audioGraphMode = 'disconnected'
 }
 
 function connectProcessingGraph() {
   if (!audioNodes || !audioContext)
     return
+
+  if (audioGraphMode === 'processing') {
+    applyLimiterSettings(audioNodes, audioContext)
+    return
+  }
 
   disconnectCurrentGraph()
   applyLimiterSettings(audioNodes, audioContext)
@@ -263,23 +275,37 @@ function connectProcessingGraph() {
   source.connect(adaptiveGain)
   adaptiveGain.connect(limiter)
   limiter.connect(audioContext.destination)
+  audioGraphMode = 'processing'
 }
 
 function connectBypassGraph() {
   if (!audioNodes || !audioContext)
     return
 
+  if (audioGraphMode === 'bypass')
+    return
+
   disconnectCurrentGraph()
   audioNodes.source.connect(audioContext.destination)
+  audioGraphMode = 'bypass'
+}
+
+function suspendProcessingForIdlePlayback(resetAnalysis = false) {
+  stopLoudnessAnalysis()
+
+  if (resetAnalysis) {
+    resetLoudnessAnalysis()
+  }
 }
 
 function unbindCurrentVideoListeners() {
   if (!currentVideoListeners)
     return
 
-  const { video, onPlay, onPause, onLoadStart, onEmptied } = currentVideoListeners
+  const { video, onPlay, onPause, onEnded, onLoadStart, onEmptied } = currentVideoListeners
   video.removeEventListener('play', onPlay)
   video.removeEventListener('pause', onPause)
+  video.removeEventListener('ended', onEnded)
   video.removeEventListener('loadstart', onLoadStart)
   video.removeEventListener('emptied', onEmptied)
 
@@ -293,14 +319,18 @@ function bindVideoListeners(video: HTMLVideoElement) {
     if (video !== currentVideoElement)
       return
 
-    if (settings.value.enableVolumeNormalization && !tempDisabled) {
-      startLoudnessAnalysis()
-    }
+    updateProcessingState()
   }
 
   const onPause = () => {
     if (video === currentVideoElement) {
-      stopLoudnessAnalysis()
+      suspendProcessingForIdlePlayback(true)
+    }
+  }
+
+  const onEnded = () => {
+    if (video === currentVideoElement) {
+      suspendProcessingForIdlePlayback(true)
     }
   }
 
@@ -308,12 +338,12 @@ function bindVideoListeners(video: HTMLVideoElement) {
     if (video !== currentVideoElement)
       return
 
-    stopLoudnessAnalysis()
-    resetLoudnessAnalysis()
+    suspendProcessingForIdlePlayback(true)
   }
 
   video.addEventListener('play', onPlay)
   video.addEventListener('pause', onPause)
+  video.addEventListener('ended', onEnded)
   video.addEventListener('loadstart', resetForNewSource)
   video.addEventListener('emptied', resetForNewSource)
 
@@ -321,6 +351,7 @@ function bindVideoListeners(video: HTMLVideoElement) {
     video,
     onPlay,
     onPause,
+    onEnded,
     onLoadStart: resetForNewSource,
     onEmptied: resetForNewSource,
   }
@@ -509,6 +540,18 @@ function updateProcessingState() {
     return
 
   try {
+    const isPlaybackActive = !!currentVideoElement
+      && !currentVideoElement.paused
+      && !currentVideoElement.ended
+
+    if (!isPlaybackActive) {
+      suspendProcessingForIdlePlayback(true)
+      log('Loudness analysis suspended while playback is inactive')
+      return
+    }
+
+    resumeAudioContext(audioContext)
+
     if (settings.value.enableVolumeNormalization && !tempDisabled) {
       connectProcessingGraph()
       resetLoudnessAnalysis()

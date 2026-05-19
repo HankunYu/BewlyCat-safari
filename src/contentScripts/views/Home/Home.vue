@@ -12,7 +12,7 @@ import type { GridLayoutIcon } from './types'
 import { HomeSubPage } from './types'
 
 const mainStore = useMainStore()
-const { handleBackToTop, homeActivatedPage } = useBewlyApp()
+const { handleBackToTop, homeActivatedPage, homeActivatedPageTouched } = useBewlyApp()
 const handleThrottledBackToTop = useThrottleFn((targetScrollTop: number = 0) => handleBackToTop(targetScrollTop), 1000)
 
 // ✅ 性能优化：缓存 scrollTop 值，避免重复 DOM 读取
@@ -33,11 +33,12 @@ const pages = computed(() => ({
   [HomeSubPage.Live]: defineAsyncComponent(() => import('./components/Live.vue')),
 }))
 const showSearchPageMode = ref<boolean>(false)
-const shouldMoveTabsUp = ref<boolean>(false)
 const tabContentLoading = ref<boolean>(false)
 const currentTabs = ref<HomeTab[]>([])
 const tabPageRef = ref()
-const topBarVisibility = ref<boolean>(false)
+const topBarVisibility = ref<boolean>(true)
+const shouldShowHomeTabs = computed(() => currentTabs.value.length > 1)
+const shouldShowHomeHeader = computed(() => shouldShowHomeTabs.value || settings.value.enableGridLayoutSwitcher)
 const gridLayoutIcons = computed((): GridLayoutIcon[] => {
   return [
     { icon: 'i-mingcute:table-3-line', iconActivated: 'i-mingcute:table-3-fill', value: 'adaptive' },
@@ -48,8 +49,16 @@ const gridLayoutIcons = computed((): GridLayoutIcon[] => {
 
 // 使用deep监听
 watch(() => settings.value.homePageTabVisibilityList, () => {
-  currentTabs.value = computeTabs()
+  syncCurrentTabs()
 }, { deep: true })
+
+function handleOverlayScroll(scrollTop: number) {
+  cachedScrollTop.value = scrollTop
+}
+
+function handleTopBarVisibilityChange(visible: boolean) {
+  topBarVisibility.value = visible
+}
 
 function computeTabs(): HomeTab[] {
   // if homePageTabVisibilityList not fresh , set it to default
@@ -70,56 +79,35 @@ function computeTabs(): HomeTab[] {
   return targetTabs
 }
 
+function syncCurrentTabs() {
+  const nextTabs = computeTabs()
+  currentTabs.value = nextTabs
+
+  const fallbackPage = nextTabs[0]?.page || mainStore.homeTabs[0].page
+  if (!nextTabs.some(tab => tab.page === activatedPage.value)) {
+    activatedPage.value = fallbackPage
+    homeActivatedPage.value = fallbackPage
+  }
+}
+
 onMounted(() => {
   showSearchPageMode.value = true
 
   // ✅ 性能优化：订阅滚动事件以缓存 scrollTop，避免后续 DOM 读取
-  emitter.on(OVERLAY_SCROLL_BAR_SCROLL, (scrollTop: number) => {
-    cachedScrollTop.value = scrollTop
-  })
+  emitter.on(OVERLAY_SCROLL_BAR_SCROLL, handleOverlayScroll)
+  emitter.on(TOP_BAR_VISIBILITY_CHANGE, handleTopBarVisibilityChange)
 
-  emitter.off(TOP_BAR_VISIBILITY_CHANGE)
-  emitter.on(TOP_BAR_VISIBILITY_CHANGE, (val) => {
-    topBarVisibility.value = val
-    shouldMoveTabsUp.value = false
-
-    // Allow moving tabs up only when the top bar is not hidden & is set to auto-hide
-    // This feature is primarily designed to compatible with the Bilibili Evolved's top bar
-    // Even when the BewlyBewly top bar is hidden, the Bilibili Evolved top bar still exists, so not moving up
-    if (settings.value.autoHideTopBar && settings.value.showTopBar) {
-      if (!settings.value.useSearchPageModeOnHomePage) {
-        if (val)
-          shouldMoveTabsUp.value = false
-
-        else
-          shouldMoveTabsUp.value = true
-      }
-      else {
-        // fix #349
-        // ✅ 性能优化：使用缓存的 scrollTop，避免 DOM 读取
-        const scrollTop = cachedScrollTop.value
-
-        if (val)
-          shouldMoveTabsUp.value = false
-
-        else if (scrollTop > 510 + 40)
-          shouldMoveTabsUp.value = true
-      }
-    }
-  })
-
-  currentTabs.value = computeTabs()
-  activatedPage.value = currentTabs.value[0].page
-  // Initialize global home activated page state
-  homeActivatedPage.value = currentTabs.value[0].page
+  syncCurrentTabs()
 })
 
 onUnmounted(() => {
-  emitter.off(TOP_BAR_VISIBILITY_CHANGE)
-  emitter.off(OVERLAY_SCROLL_BAR_SCROLL)
+  emitter.off(TOP_BAR_VISIBILITY_CHANGE, handleTopBarVisibilityChange)
+  emitter.off(OVERLAY_SCROLL_BAR_SCROLL, handleOverlayScroll)
 })
 
 function handleChangeTab(tab: HomeTab) {
+  homeActivatedPageTouched.value = true
+
   if (activatedPage.value === tab.page) {
     // ✅ 性能优化：使用缓存的 scrollTop，避免 DOM 读取
     const scrollTop = cachedScrollTop.value
@@ -219,12 +207,12 @@ function toggleTabContentLoading(loading: boolean) {
       </Transition>
 
       <header
-        pos="sticky top-[calc(var(--bew-top-bar-height)+10px)]" w-full z-9 m="b-4" duration-300
+        v-if="shouldShowHomeHeader"
+        w-full z-9 m="b-4" duration-300
         ease-in-out flex="~ justify-between items-start gap-4"
-        :class="{ hide: shouldMoveTabsUp }"
       >
         <section
-          v-if="!(!settings.alwaysShowTabsOnHomePage && currentTabs.length === 1)"
+          v-if="shouldShowHomeTabs"
           class="glass-panel"
           bg="$bew-elevated" p-1
           w="[calc(100%-280px)]" max-w="fit"
@@ -320,10 +308,6 @@ function toggleTabContentLoading(loading: boolean) {
 }
 .content-leave-to {
   --uno: "hidden";
-}
-
-.hide {
-  --uno: "important-translate-y--70px";
 }
 
 .glass-panel {

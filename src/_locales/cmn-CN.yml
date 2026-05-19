@@ -128,6 +128,8 @@ settings:
     启用后，如顶栏，你可能需要点击项目以查看更多信息，而不是鼠标直接悬停查看。（旧版顶栏不支持此功能）
   show_home_button_in_touch_mode: 显示 Home 按钮
   show_home_button_in_touch_mode_desc: 在触屏优化开启时，在顶栏 Logo 旁边显示一个可以直接跳转到首页的按钮。
+  hide_lv6_last_login_location_in_top_bar_user_pop: 隐藏 LV6 等级最后登录信息显示
+  hide_lv6_last_login_location_in_top_bar_user_pop_desc: 开启后，顶栏头像弹窗中的 LV6 等级信息区域将不再显示最后登录时间和地点，也不会请求登录记录。
   chk_box:
     show: 显示
     hidden: 隐藏
@@ -232,6 +234,7 @@ settings:
   enable_video_preview: 启用视频预览功能（如果可以的话）
   enable_video_ctrl_bar_on_video_card: 在视频卡片上显示视频控制栏
   hover_video_card_delayed: 将鼠标悬停在视频卡片上时延迟视频预览
+  only_cover_video_preview: 仅封面视频预览
   show_video_card_recommend_tag: 显示插件计算的推荐标签
   show_video_card_recommend_tag_desc: 显示插件计算的标签，如"高赞"、"高互动"、"百万播放"等
   auto_hide_top_bar: 自动隐藏顶栏
@@ -292,6 +295,7 @@ settings:
   video_card_layout_desc: 在新版与旧版视频卡片显示样式之间切换。
   video_card_layout_option:
     modern: 新版
+    compact: 紧凑
     old: 经典版
   font_size_option:
     xs: 特小
@@ -424,8 +428,10 @@ settings:
   following_filter_dynamic_videos_desc: 开启后，在 "正在关注" 页面中将隐藏标记为动态视频的内容
   use_following_new_layout: 使用正在关注新布局
   use_following_new_layout_desc: 左侧显示关注的UP主列表，右侧显示视频流
+  enable_following_inactive_blacklist: 启用不活跃名单
+  enable_following_inactive_blacklist_desc: 当UP主超过指定天数未更新或无投稿时，将自动移至不活跃名单。在ALL视图中出现更新或点击该UP主时会自动移出不活跃名单
   following_inactive_days: UP主不活跃天数
-  following_inactive_days_desc: 当UP主超过指定天数未更新或无投稿时，将自动移至黑名单。在ALL视图中出现更新或点击该UP主时会自动移出黑名单
+  following_inactive_days_desc: 许用“使用正在关注新布局”后该功能生效。与自主添加的用户黑名单无关，仅更改“正在关注”页面推荐
   preserve_for_you_state: 留存个性推荐切换前状态
   preserve_for_you_state_desc: 当从dock栏切换到其他页面时，留存个性推荐页面的浏览状态，返回时保持切换前的内容
   use_search_page_mode: 首页使用搜索页模式
@@ -434,7 +440,7 @@ settings:
   search_page_mode_wallpaper_fixed: 将搜索页模式的壁纸固定
   home_tabs_adjustment: 标签栏调整
   home_tabs_adjustment_desc: 第一个激活的标签项是默认界面
-  always_show_tabs_on_home_page: 总是显示首页标签栏
+  always_show_tabs_on_home_page: 滚动隐藏首页标签栏
   topbar_visibility: 顶栏可见性
   topbar_visibility_desc: 如果您正在使用 Bilibili Evolved 的顶栏，您可以在这里关闭 BewlyCat 的顶栏。
   use_original_bilibili_homepage: 使用原版 Bilibili 首页

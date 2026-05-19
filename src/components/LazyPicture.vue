@@ -5,14 +5,16 @@
  * 只在图片即将进入视口时才开始加载，减少不必要的网络请求
  */
 
-import { useGlobalScrollState } from '~/composables/useGlobalScrollState'
-
 interface Props {
   src: string
   alt?: string
   loading?: 'lazy' | 'eager'
   // rootMargin: 距离视口多少像素时开始加载，默认 150px
   rootMargin?: string
+  // 是否在图片离开保留范围后释放 img/src
+  releaseOffscreen?: boolean
+  // 保留可视区域上下多少屏内的图片
+  retainScreens?: number
   // 是否显示骨架屏动画
   showSkeleton?: boolean
 }
@@ -21,6 +23,8 @@ const props = withDefaults(defineProps<Props>(), {
   alt: '',
   loading: 'lazy',
   rootMargin: '150px', // 平衡预加载和性能
+  releaseOffscreen: true,
+  retainScreens: 3,
   showSkeleton: true,
 })
 
@@ -32,10 +36,14 @@ const imgRef = ref<HTMLElement>()
 const isVisible = ref(false)
 const isLoaded = ref(false)
 const actualSrc = ref('')
-const pendingLoad = ref(false)
 
 // IntersectionObserver 实例
 let observer: IntersectionObserver | null = null
+
+function cleanupObserver() {
+  observer?.disconnect()
+  observer = null
+}
 
 // 开始加载图片
 function startLoad() {
@@ -43,22 +51,41 @@ function startLoad() {
   actualSrc.value = props.src
 }
 
+function releaseImage() {
+  if (!props.releaseOffscreen || props.loading === 'eager')
+    return
+
+  actualSrc.value = ''
+  isVisible.value = false
+  isLoaded.value = false
+}
+
+function getObserverRootMargin() {
+  if (!props.releaseOffscreen)
+    return props.rootMargin
+
+  const screens = Number.isFinite(props.retainScreens) && props.retainScreens > 0
+    ? props.retainScreens
+    : 3
+
+  return `${screens * 100}% 0px`
+}
+
+function isElementInRetainedRange(element: HTMLElement): boolean {
+  const screens = Number.isFinite(props.retainScreens) && props.retainScreens > 0
+    ? props.retainScreens
+    : 3
+  const margin = window.innerHeight * screens
+  const rect = element.getBoundingClientRect()
+
+  return rect.bottom >= -margin && rect.top <= window.innerHeight + margin
+}
+
 // 如果是 eager 模式，立即加载
 if (props.loading === 'eager') {
   isVisible.value = true
   actualSrc.value = props.src
 }
-
-// 使用全局共享的滚动状态
-const { isScrolling } = useGlobalScrollState()
-
-// 监听滚动停止，加载待加载的图片
-watch(isScrolling, (scrolling) => {
-  if (!scrolling && pendingLoad.value && !isVisible.value) {
-    pendingLoad.value = false
-    startLoad()
-  }
-})
 
 onMounted(() => {
   // eager 模式直接加载
@@ -69,27 +96,22 @@ onMounted(() => {
   // 创建并绑定 IntersectionObserver 的函数
   const createObserver = () => {
     // 先断开之前的 observer，避免重复
-    observer?.disconnect()
+    cleanupObserver()
 
     observer = new IntersectionObserver(
       (entries) => {
         entries.forEach((entry) => {
           if (entry.isIntersecting && !isVisible.value) {
-            if (isScrolling.value) {
-              // 用户正在滚动，先延迟加载
-              pendingLoad.value = true
-            }
-            else {
-              // 可见且未滚动，立即加载
-              startLoad()
-            }
-            // 一旦加载，断开 observer，避免重复触发
-            observer?.disconnect()
+            startLoad()
+          }
+          else if (!entry.isIntersecting) {
+            if (isVisible.value)
+              releaseImage()
           }
         })
       },
       {
-        rootMargin: props.rootMargin,
+        rootMargin: getObserverRootMargin(),
         threshold: 0.01,
       },
     )
@@ -106,34 +128,27 @@ onMounted(() => {
   watch(
     () => imgRef.value,
     (newEl) => {
-      if (newEl && !isVisible.value) {
+      if (newEl) {
         createObserver()
       }
     },
   )
 
-  // 可选：强制检查可视区立即加载图片（解决刷新后顶部不显示问题）
+  // 可选：强制检查保留范围内立即加载图片（解决刷新后顶部不显示问题）
   nextTick(() => {
     if (imgRef.value && !isVisible.value) {
-      const rect = imgRef.value.getBoundingClientRect()
-      if (rect.bottom > 0 && rect.top < window.innerHeight) {
+      if (isElementInRetainedRange(imgRef.value)) {
         startLoad()
       }
     }
   })
+})
 
-  // 页面滚动停止时加载 pending 图片
-  watch(isScrolling, (scrolling) => {
-    if (!scrolling && pendingLoad.value && !isVisible.value) {
-      pendingLoad.value = false
-      startLoad()
-    }
-  })
-
-  // 页面卸载时断开 observer
-  onBeforeUnmount(() => {
-    observer?.disconnect()
-  })
+onBeforeUnmount(() => {
+  cleanupObserver()
+  actualSrc.value = ''
+  isVisible.value = false
+  isLoaded.value = false
 })
 
 // 监听图片加载完成
@@ -169,7 +184,7 @@ watch(() => props.src, (newSrc) => {
     />
 
     <!-- 实际图片 - 图片可见后加载 -->
-    <template v-if="isVisible">
+    <template v-if="isVisible && actualSrc">
       <source :srcset="`${actualSrc}.avif`" type="image/avif">
       <source :srcset="`${actualSrc}.webp`" type="image/webp">
       <img

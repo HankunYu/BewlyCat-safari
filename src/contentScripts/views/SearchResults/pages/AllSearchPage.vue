@@ -8,6 +8,7 @@ import ArticleCard from '~/components/ArticleCard/ArticleCard.vue'
 import BangumiEpisodeList from '~/components/BangumiEpisodeList/BangumiEpisodeList.vue'
 import Loading from '~/components/Loading.vue'
 import MediaEpisodeSelect from '~/components/MediaEpisodeSelect/MediaEpisodeSelect.vue'
+import SmoothLoading from '~/components/SmoothLoading.vue'
 import VideoCard from '~/components/VideoCard/VideoCard.vue'
 import VideoCardGrid from '~/components/VideoCardGrid.vue'
 import { useBewlyApp } from '~/composables/useAppProvider'
@@ -913,8 +914,14 @@ defineExpose({
           :show-preview="true"
           :show-watcher-later="true"
           :empty-description="t('common.no_data')"
+          :show-loading-more-skeleton="false"
           enable-row-padding
           @load-more="handleLoadMore"
+        />
+        <SmoothLoading
+          v-if="paginationMode === 'scroll' && videoList.length > 0 && hasMore"
+          :show="isLoading"
+          :keep-space="true"
         />
       </div>
     </div>

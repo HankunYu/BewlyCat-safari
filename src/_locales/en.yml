@@ -133,6 +133,8 @@ settings:
     supported by the old top bar.)
   show_home_button_in_touch_mode: Show Home button
   show_home_button_in_touch_mode_desc: When touch screen optimization is enabled, show a Home button next to the top bar Logo to navigate directly to the homepage.
+  hide_lv6_last_login_location_in_top_bar_user_pop: Hide LV6 last login info
+  hide_lv6_last_login_location_in_top_bar_user_pop_desc: When enabled, the LV6 section in the top bar user popup will no longer show the last login time or location, and no login log request will be made.
   chk_box:
     show: Show
     hidden: Hidden
@@ -203,6 +205,7 @@ settings:
   enable_video_preview: Enable video preview feature (if possible)
   enable_video_ctrl_bar_on_video_card: Display the video control bar on the video card
   hover_video_card_delayed: Delayed video preview on hover over the video card
+  only_cover_video_preview: Preview videos only when hovering the cover
   show_video_card_recommend_tag: Show plugin-calculated recommendation tags
   show_video_card_recommend_tag_desc: Display tags calculated by the plugin, such as "High Engagement", "Popular", etc.
   auto_hide_top_bar: Auto-hide top bar
@@ -261,6 +264,7 @@ settings:
   video_card_layout_desc: Switch between the redesigned card and the legacy layout.
   video_card_layout_option:
     modern: Modern layout
+    compact: Compact layout
     old: Classic layout
   font_size_option:
     xs: Extra small
@@ -428,8 +432,10 @@ settings:
   following_filter_dynamic_videos_desc: When enabled, videos marked as dynamic videos will be hidden in the "Following" page
   use_following_new_layout: Use new layout for Following tab
   use_following_new_layout_desc: Display followed UPs list on the left and video feed on the right
+  enable_following_inactive_blacklist: Enable Inactive List
+  enable_following_inactive_blacklist_desc: When a UP has not posted for the specified number of days or has no videos, they will be automatically moved to the Inactive List. They will be removed from the Inactive List when appearing in ALL view or when clicked
   following_inactive_days: UP inactive days
-  following_inactive_days_desc: When a UP has not posted for the specified number of days or has no videos, they will be automatically moved to the blacklist. They will be removed from the blacklist when appearing in ALL view or when clicked
+  following_inactive_days_desc: The feature takes effect after applying 'Use new layout for Following tab' It is unrelated to the custom user blacklist and only modifies recommendations within the 'new layout for Following tab' module.
   preserve_for_you_state: Preserve "For You" pre-switch state
   preserve_for_you_state_desc: When switching from dock to other pages, preserve the browsing state of the "For You" page and maintain content before switching when returning
   use_search_page_mode: Use search page mode on homepage
@@ -438,7 +444,7 @@ settings:
   search_page_mode_wallpaper_fixed: Make the wallpaper of the search page mode fixed
   home_tabs_adjustment: Tabs adjustment
   home_tabs_adjustment_desc: The first activated tab is the default page.
-  always_show_tabs_on_home_page: Always show tabs on the home page
+  always_show_tabs_on_home_page: Hide home tabs while scrolling
   topbar_visibility: BewlyBewly's top bar visibility
   topbar_visibility_desc: >-
     If you are using Bilibili Evolved's top bar, you can turn BewlyBewly's top

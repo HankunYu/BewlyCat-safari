@@ -411,16 +411,21 @@ function handleToggleHomeTab(tab: any) {
       <SettingsItem :title="$t('settings.use_following_new_layout')" :desc="$t('settings.use_following_new_layout_desc')">
         <Radio v-model="settings.useFollowingNewLayout" />
       </SettingsItem>
-      <SettingsItem :title="$t('settings.following_inactive_days')" :desc="$t('settings.following_inactive_days_desc')">
-        <Input
-          v-model="settings.followingInactiveDays" type="number" :min="1" :max="365"
-          w-120px
-        >
-          <template #suffix>
-            <span text="sm $bew-text-2" whitespace-nowrap>{{ $t('common.days') }}</span>
-          </template>
-        </Input>
+      <SettingsItem :title="$t('settings.enable_following_inactive_blacklist')" :desc="$t('settings.enable_following_inactive_blacklist_desc')">
+        <Radio v-model="settings.enableFollowingInactiveBlacklist" />
       </SettingsItem>
+      <template v-if="settings.enableFollowingInactiveBlacklist">
+        <SettingsItem :title="$t('settings.following_inactive_days')" :desc="$t('settings.following_inactive_days_desc')">
+          <Input
+            v-model="settings.followingInactiveDays" type="number" :min="1" :max="365"
+            w-120px
+          >
+            <template #suffix>
+              <span text="sm $bew-text-2" whitespace-nowrap>{{ $t('common.days') }}</span>
+            </template>
+          </Input>
+        </SettingsItem>
+      </template>
       <SettingsItem :title="$t('settings.following_tab_show_livestreaming_videos')">
         <Radio v-model="settings.followingTabShowLivestreamingVideos" />
       </SettingsItem>
@@ -469,9 +474,6 @@ function handleToggleHomeTab(tab: any) {
             </template>
           </draggable>
         </template>
-      </SettingsItem>
-      <SettingsItem :title="$t('settings.always_show_tabs_on_home_page')">
-        <Radio v-model="settings.alwaysShowTabsOnHomePage" />
       </SettingsItem>
     </SettingsItemGroup>
 

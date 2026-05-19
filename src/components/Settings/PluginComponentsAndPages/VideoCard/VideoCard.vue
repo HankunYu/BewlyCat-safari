@@ -16,7 +16,7 @@ import ShadowCurveEditor from '../../components/ShadowCurveEditor.vue'
 const { t } = useI18n()
 
 const fontSizeOptionValues: VideoCardFontSizeSetting[] = ['xs', 'sm', 'base', 'lg']
-const videoCardLayoutOptionValues: VideoCardLayoutSetting[] = ['modern', 'old']
+const videoCardLayoutOptionValues: VideoCardLayoutSetting[] = ['modern', 'compact', 'old']
 
 const videoCardFontSizeOptions = computed(() => fontSizeOptionValues.map(value => ({
   label: t(`settings.font_size_option.${value}`),
@@ -49,7 +49,7 @@ const videoCardOpenModeOptions = computed(() => {
   ]
 })
 
-const isModernLayout = computed(() => settings.value.videoCardLayout === 'modern')
+const isModernLayout = computed(() => settings.value.videoCardLayout === 'modern' || settings.value.videoCardLayout === 'compact')
 
 function resetShadowSettings() {
   settings.value.videoCardShadowCurve = [...originalSettings.videoCardShadowCurve]
@@ -143,6 +143,10 @@ function resetColumns() {
 
         <SettingsItem :title="$t('settings.hover_video_card_delayed')">
           <Radio v-model="settings.hoverVideoCardDelayed" />
+        </SettingsItem>
+
+        <SettingsItem :title="$t('settings.only_cover_video_preview')">
+          <Radio v-model="settings.onlyCoverVideoPreview" />
         </SettingsItem>
       </template>
 

@@ -708,9 +708,15 @@ defineExpose({
             :request-failed="!!error"
             :show-watcher-later="false"
             :empty-description="t('common.no_data')"
+            :show-loading-more-skeleton="false"
             enable-row-padding
             show-preview
             @load-more="handleLoadMore"
+          />
+          <SmoothLoading
+            v-if="paginationMode === 'scroll' && transformedLiveRoomList.length > 0 && hasMore"
+            :show="isLoading"
+            :keep-space="true"
           />
         </div>
       </template>

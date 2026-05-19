@@ -1,4 +1,5 @@
 <script setup lang="ts" generic="T = any">
+import { useVirtualizer } from '@tanstack/vue-virtual'
 import { useDebounceFn } from '@vueuse/core'
 
 import type { Video } from '~/components/VideoCard/types'
@@ -7,7 +8,6 @@ import { useVideoCardShadowStyle } from '~/composables/useVideoCardShadowStyle'
 import { OVERLAY_SCROLL_BAR_SCROLL } from '~/constants/globalEvents'
 import type { GridLayoutType } from '~/logic'
 import { settings } from '~/logic'
-import { isHomePage } from '~/utils/main'
 import emitter from '~/utils/mitt'
 
 /**
@@ -106,6 +106,18 @@ interface VideoCardGridProps<T = any> {
   enableRowPadding?: boolean
 
   /**
+   * 加载更多时是否在列表末尾插入骨架屏
+   * @default true
+   */
+  showLoadingMoreSkeleton?: boolean
+
+  /**
+   * 加载更多时插入的骨架屏数量
+   * @default 10
+   */
+  loadingMoreSkeletonCount?: number
+
+  /**
    * 是否为 Following 页面
    * 用于在右键菜单中默认显示"取消关注"选项
    * @default false
@@ -131,6 +143,8 @@ const props = withDefaults(defineProps<VideoCardGridProps<T>>(), {
   initialSkeletonCount: 30,
   isSkeletonItem: undefined,
   enableRowPadding: false,
+  showLoadingMoreSkeleton: true,
+  loadingMoreSkeletonCount: 10,
   requestFailed: false,
 })
 
@@ -146,7 +160,7 @@ const loadMoreSentinelRef = ref<HTMLElement | null>(null)
 const isLoadMoreSentinelIntersecting = ref(false)
 
 // 使用共享的 Grid 布局 composable（CSS 媒体查询驱动，无 JS 计算开销）
-const { gridClass, gridCssVars } = useGridLayout(() => props.gridLayout)
+const { gridCssVars } = useGridLayout(() => props.gridLayout)
 
 // 获取 shadow 样式变量（避免依赖外部传入）
 const { shadowStyleVars } = useVideoCardShadowStyle()
@@ -207,7 +221,7 @@ const paddingSkeletonItems = computed(() => {
 
 // 是否正在加载更多（数据已达阈值且loading）
 const isLoadingMore = computed(() => {
-  return props.loading && props.items.length >= MIN_ITEMS_TO_RENDER
+  return props.showLoadingMoreSkeleton && props.loading && props.items.length >= MIN_ITEMS_TO_RENDER
 })
 
 // 生成加载更多时的骨架屏数据（使用固定数量，由 CSS Grid 自动处理布局）
@@ -215,8 +229,8 @@ const loadingMoreSkeletonItems = computed(() => {
   if (!isLoadingMore.value)
     return []
 
-  // 加载更多时显示固定数量的骨架屏，CSS Grid 会自动处理布局
-  const totalSkeletons = 10
+  // 加载更多时显示少量骨架屏，CSS Grid 会自动处理布局
+  const totalSkeletons = Math.max(1, Math.floor(props.loadingMoreSkeletonCount))
 
   return Array.from({ length: totalSkeletons }, (_, i) => ({
     _isSkeleton: true,
@@ -285,6 +299,7 @@ function triggerLoadMore() {
 }
 
 const supportsIntersectionObserver = typeof window !== 'undefined' && 'IntersectionObserver' in window
+const isFirefox = typeof navigator !== 'undefined' && /\bFirefox\//.test(navigator.userAgent)
 let intersectionObserver: IntersectionObserver | null = null
 
 function cleanupIntersectionObserver() {
@@ -331,6 +346,7 @@ function setupIntersectionObserver() {
 
 // RAF 标志，用于批量处理 DOM 读取
 let checkPreloadRAF: number | null = null
+let containerResizeObserver: ResizeObserver | null = null
 
 // 检查是否需要预加载
 function checkShouldPreload() {
@@ -373,29 +389,30 @@ function checkShouldPreload() {
 const debouncedCheck = useDebounceFn(checkShouldPreload, 100)
 
 // 监听滚动
+// emitter 路径已在 App.vue 的 RAF 内，直接同步更新避免双 RAF 延迟
+// native 路径浏览器已限制为每帧一次，也可直接更新
 function handleScroll() {
   debouncedCheck()
 }
 
 // 设置滚动监听
 function setupScrollListeners() {
-  if (supportsIntersectionObserver)
-    return
-
-  // 首页使用 OverlayScrollbars，监听自定义事件
-  if (isHomePage() && !settings.value.useOriginalBilibiliHomepage) {
+  // Bewly 自己的页面都在内部滚动容器中，通过全局事件同步 scrollTop
+  if (!settings.value.useOriginalBilibiliHomepage) {
     emitter.on(OVERLAY_SCROLL_BAR_SCROLL, handleScroll)
   }
-  // 其他页面监听 window scroll
   else {
     window.addEventListener('scroll', handleScroll, { passive: true })
   }
+
+  window.addEventListener('resize', handleResize, { passive: true })
 }
 
 // 清理滚动监听
 function cleanupScrollListeners() {
   emitter.off(OVERLAY_SCROLL_BAR_SCROLL, handleScroll)
   window.removeEventListener('scroll', handleScroll)
+  window.removeEventListener('resize', handleResize)
 }
 
 // 监听 loading 结束后检查是否需要继续加载
@@ -484,7 +501,16 @@ watch(
 
     // 只在追加时分块渲染
     if (newLen > oldLen) {
-      scheduleChunkRender(newLen)
+      // 虚拟滚动激活时，跳过分块渲染——虚拟窗口已经限制了 DOM 数量，
+      // 分块渲染的 requestIdleCallback 在快速滚动时反而会导致渲染滞后
+      const estimatedColumns = getCurrentColumnCount(props.gridLayout, gridContainerRef.value?.clientWidth || (typeof window !== 'undefined' ? window.innerWidth : 0))
+      const virtualThreshold = 6 * estimatedColumns
+      if (newLen > virtualThreshold) {
+        renderLimit.value = newLen
+      }
+      else {
+        scheduleChunkRender(newLen)
+      }
       return
     }
 
@@ -498,6 +524,7 @@ onMounted(() => {
   renderLimit.value = displayItems.value.length
 
   setupScrollListeners()
+  setupContainerResizeObserver()
   setupIntersectionObserver()
   // 初始检查
   nextTick(() => {
@@ -507,6 +534,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   cleanupScrollListeners()
+  cleanupContainerResizeObserver()
   cleanupIntersectionObserver()
   if (loadMoreRequestTimeout !== null) {
     window.clearTimeout(loadMoreRequestTimeout)
@@ -516,6 +544,7 @@ onUnmounted(() => {
     cancelAnimationFrame(checkPreloadRAF)
     checkPreloadRAF = null
   }
+  resetTransformCaches()
 })
 
 // 计算是否横向布局（根据 gridLayout 自动决定）
@@ -582,9 +611,211 @@ function scheduleChunkRender(target: number) {
 // 限制实际渲染的 items（分块显示）
 const limitedDisplayItems = computed(() => displayItems.value.slice(0, renderLimit.value))
 
+const containerWidth = ref(0)
+const viewportHeight = ref(typeof window !== 'undefined' ? window.innerHeight : 0)
+
+function normalizePositiveInt(value: unknown, fallback: number): number {
+  const normalized = Number(value)
+  if (!Number.isFinite(normalized) || normalized <= 0)
+    return fallback
+  return Math.max(1, Math.round(normalized))
+}
+
+function getAdaptiveGridColumns(width: number): number {
+  const gridColumns = settings.value.gridColumns
+
+  if (width >= 1536)
+    return normalizePositiveInt(gridColumns.xxl, 6)
+  if (width >= 1280)
+    return normalizePositiveInt(gridColumns.xl, 5)
+  if (width >= 1024)
+    return normalizePositiveInt(gridColumns.lg, 4)
+  if (width >= 768)
+    return normalizePositiveInt(gridColumns.md, 3)
+  if (width >= 640)
+    return normalizePositiveInt(gridColumns.sm, 2)
+
+  return normalizePositiveInt(gridColumns.base, 1)
+}
+
+function getCurrentColumnCount(layout: GridLayoutType, width: number): number {
+  if (layout === 'twoColumns')
+    return 2
+  if (layout === 'oneColumn')
+    return 1
+  return getAdaptiveGridColumns(width)
+}
+
+function getGridGap(layout: GridLayoutType): number {
+  return layout === 'adaptive' ? 20 : 16
+}
+
+function getEstimatedRowSpan(layout: GridLayoutType): number {
+  if (layout === 'twoColumns')
+    return 236
+  if (layout === 'oneColumn')
+    return 188
+  return 352
+}
+
+function getFallbackEstimatedRowHeight(layout: GridLayoutType): number {
+  return Math.max(1, getEstimatedRowSpan(layout) - getGridGap(layout))
+}
+
+function getEstimatedAdaptiveRowHeight(width: number, columns: number): number {
+  if (width <= 0 || columns <= 0)
+    return getFallbackEstimatedRowHeight('adaptive')
+
+  const gap = getGridGap('adaptive')
+  const cardWidth = Math.max(1, (width - gap * (columns - 1)) / columns)
+  const coverHeight = cardWidth * 9 / 16
+
+  // Keep the first virtual pass close to the actual card height so rows do
+  // not render with a large temporary gap before ResizeObserver catches up.
+  switch (settings.value.videoCardLayout) {
+    case 'compact':
+      return coverHeight + 66
+    case 'old':
+      return coverHeight + 132
+    case 'modern':
+    default:
+      return coverHeight + 112
+  }
+}
+
+function getEstimatedHorizontalItemHeight(layout: GridLayoutType, itemWidth: number): number {
+  const fallbackHeight = layout === 'twoColumns' ? 220 : 236
+
+  if (itemWidth <= 0)
+    return fallbackHeight
+
+  const coverWidth = Math.min(itemWidth, 400)
+  const coverHeight = coverWidth * 9 / 16
+
+  return Math.max(fallbackHeight, Math.ceil(coverHeight))
+}
+
+const resolvedContainerWidth = computed(() => {
+  if (containerWidth.value > 0)
+    return containerWidth.value
+
+  if (gridContainerRef.value?.clientWidth)
+    return gridContainerRef.value.clientWidth
+
+  if (typeof window !== 'undefined')
+    return window.innerWidth
+
+  return 0
+})
+
+const currentColumnCount = computed(() =>
+  getCurrentColumnCount(props.gridLayout, resolvedContainerWidth.value),
+)
+
+const currentGridGap = computed(() => getGridGap(props.gridLayout))
+
+const VIRTUAL_RETAIN_SCREENS = 2
+
+const virtualItemWidth = computed(() => {
+  const columns = currentColumnCount.value
+  const width = resolvedContainerWidth.value
+  if (columns <= 1)
+    return Math.max(1, width)
+  return Math.max(1, (width - currentGridGap.value * (columns - 1)) / columns)
+})
+
+const estimatedItemHeight = computed(() => {
+  if (props.gridLayout === 'adaptive')
+    return getEstimatedAdaptiveRowHeight(resolvedContainerWidth.value, currentColumnCount.value)
+  return getEstimatedHorizontalItemHeight(props.gridLayout, virtualItemWidth.value)
+})
+
+const visibleRowCount = computed(() => {
+  const rowSpan = Math.max(1, estimatedItemHeight.value + currentGridGap.value)
+  return Math.max(1, Math.ceil(viewportHeight.value / rowSpan))
+})
+
+const overscanRowCount = computed(() =>
+  Math.max(2, Math.ceil(visibleRowCount.value * VIRTUAL_RETAIN_SCREENS)),
+)
+
+const overscanItemCount = computed(() =>
+  overscanRowCount.value * currentColumnCount.value,
+)
+
+function findScrollElement(): HTMLElement | null {
+  if (settings.value.useOriginalBilibiliHomepage)
+    return document.scrollingElement as HTMLElement | null
+
+  let element = gridContainerRef.value?.parentElement ?? null
+  while (element) {
+    const styles = window.getComputedStyle(element)
+    const canScrollY = /auto|scroll|overlay/.test(styles.overflowY)
+    if (canScrollY && element.scrollHeight > element.clientHeight)
+      return element
+    element = element.parentElement
+  }
+
+  return null
+}
+
+const itemVirtualizer = useVirtualizer<HTMLElement, HTMLElement>(computed(() => ({
+  count: limitedDisplayItems.value.length,
+  getScrollElement: () => findScrollElement(),
+  estimateSize: () => estimatedItemHeight.value,
+  overscan: overscanItemCount.value,
+  gap: currentGridGap.value,
+  lanes: currentColumnCount.value,
+  getItemKey: index => getUniqueKey(limitedDisplayItems.value[index], index),
+  shouldAdjustScrollPositionOnItemSizeChange: () => false,
+})))
+
+const virtualItems = computed(() => itemVirtualizer.value.getVirtualItems())
+const virtualTotalHeight = computed(() => itemVirtualizer.value.getTotalSize())
+
+function handleResize() {
+  viewportHeight.value = typeof window !== 'undefined' ? window.innerHeight : viewportHeight.value
+  itemVirtualizer.value.measure()
+  debouncedCheck()
+}
+
+function cleanupContainerResizeObserver() {
+  if (containerResizeObserver) {
+    containerResizeObserver.disconnect()
+    containerResizeObserver = null
+  }
+}
+
+function setupContainerResizeObserver() {
+  cleanupContainerResizeObserver()
+
+  const container = gridContainerRef.value
+  if (!container || typeof ResizeObserver === 'undefined')
+    return
+
+  containerWidth.value = container.clientWidth
+
+  containerResizeObserver = new ResizeObserver((entries) => {
+    const entry = entries[0]
+    if (!entry)
+      return
+
+    const nextWidth = entry.contentRect.width
+    if (Math.abs(nextWidth - containerWidth.value) <= 0.5)
+      return
+
+    containerWidth.value = nextWidth
+    viewportHeight.value = typeof window !== 'undefined' ? window.innerHeight : viewportHeight.value
+    itemVirtualizer.value.measure()
+  })
+
+  containerResizeObserver.observe(container)
+}
+
 // 类型定义：每个 VideoCard 的渲染所需数据
 interface VideoCardRenderItem {
   key: string | number
+  index: number
   item: T
   skeleton: boolean
   type: 'rcmd' | 'appRcmd' | 'bangumi' | 'common'
@@ -602,59 +833,97 @@ function inferVideoTypeFromVideo(video: Video | undefined): 'rcmd' | 'appRcmd' |
   return props.videoType || 'common'
 }
 
-// 关键优化：把 isSkeleton / inferVideoType / transform 从 template 挪到 computed，
-// 避免任何"无关更新"(例如 scroll state)导致 11k 次函数调用。
-const renderItems = computed<VideoCardRenderItem[]>(() => {
-  const items = limitedDisplayItems.value // 使用分块限制的 items
+function createRenderItem(item: T, index: number): VideoCardRenderItem {
+  const key = getUniqueKey(item, index)
   const fallbackType = props.videoType || 'common'
-  const out: VideoCardRenderItem[] = Array.from({ length: items.length })
 
-  for (let index = 0; index < items.length; index++) {
-    const item = items[index] as T
-    const key = getUniqueKey(item, index)
-
-    // 自动生成骨架屏
-    if ((item as any)?._isSkeleton) {
-      out[index] = { key, item, skeleton: true, type: fallbackType, video: undefined }
-      continue
+  // 自动生成骨架屏
+  if ((item as any)?._isSkeleton) {
+    return {
+      key,
+      index,
+      item,
+      skeleton: true,
+      type: fallbackType,
+      video: undefined,
     }
-
-    // 外部骨架判断（命中时不做 transform）
-    if (props.isSkeletonItem) {
-      try {
-        if (props.isSkeletonItem(item)) {
-          out[index] = { key, item, skeleton: true, type: fallbackType, video: undefined }
-          continue
-        }
-      }
-      catch {
-        // ignore
-      }
-    }
-
-    const video = getTransformedVideo(item)
-    const skeleton = !video || (video.id == null && !video.bvid)
-    const type = skeleton ? fallbackType : inferVideoTypeFromVideo(video)
-    out[index] = { key, item, skeleton, type, video }
   }
 
-  return out
+  // 外部骨架判断（命中时不做 transform）
+  if (props.isSkeletonItem) {
+    try {
+      if (props.isSkeletonItem(item)) {
+        return {
+          key,
+          index,
+          item,
+          skeleton: true,
+          type: fallbackType,
+          video: undefined,
+        }
+      }
+    }
+    catch {
+      // ignore
+    }
+  }
+
+  const video = getTransformedVideo(item, key)
+  const skeleton = !video || (video.id == null && !video.bvid)
+  const type = skeleton ? fallbackType : inferVideoTypeFromVideo(video)
+  return { key, index, item, skeleton, type, video }
+}
+
+interface VirtualCardRenderItem extends VideoCardRenderItem {
+  lane: number
+  start: number
+}
+
+// 关键优化：用 TanStack lanes 直接虚拟化卡片，避免行容器与 Grid 布局互相修正。
+const renderItems = computed<VirtualCardRenderItem[]>(() => {
+  const sourceItems = limitedDisplayItems.value
+  return virtualItems.value.flatMap((virtualItem) => {
+    const item = sourceItems[virtualItem.index]
+    if (!item)
+      return []
+
+    return [{
+      ...createRenderItem(item, virtualItem.index),
+      lane: virtualItem.lane,
+      start: virtualItem.start,
+    }]
+  })
 })
 
-// 判断是否为骨架屏项
-let videoTransformCache = new WeakMap<object, Video | undefined>()
-let primitiveVideoTransformCache: Map<unknown, Video | undefined> | null = null
+interface VideoTransformCacheEntry<T = any> {
+  item: T
+  video: Video | undefined
+}
+
+let videoTransformCache = new Map<string | number, VideoTransformCacheEntry<T>>()
 
 function resetTransformCaches() {
-  videoTransformCache = new WeakMap<object, Video | undefined>()
-  primitiveVideoTransformCache = null
+  videoTransformCache = new Map()
 }
 
 watch(() => props.transformItem, () => {
   resetTransformCaches()
 })
 
-function getTransformedVideo(item: T): Video | undefined {
+watch(
+  () => renderItems.value.map(item => item.key),
+  (activeKeys) => {
+    const activeKeySet = new Set(activeKeys)
+
+    for (const key of videoTransformCache.keys()) {
+      if (!activeKeySet.has(key))
+        videoTransformCache.delete(key)
+    }
+  },
+  { flush: 'post' },
+)
+
+function getTransformedVideo(item: T, key: string | number): Video | undefined {
   if (!item)
     return undefined
 
@@ -663,36 +932,39 @@ function getTransformedVideo(item: T): Video | undefined {
     return undefined
 
   try {
-    const keyType = typeof item
-    if (keyType === 'object' || keyType === 'function') {
-      const objKey = item as any as object
-      if (videoTransformCache.has(objKey)) {
-        // Cache命中，无需重新转换
-        return videoTransformCache.get(objKey)
-      }
-
-      // Cache未命中，执行转换（性能关键路径）
-      const video = props.transformItem(item)
-
-      videoTransformCache.set(objKey, video)
-      return video
-    }
-
-    // 原始类型兜底（很少见）
-    if (!primitiveVideoTransformCache)
-      primitiveVideoTransformCache = new Map()
-    if (primitiveVideoTransformCache.has(item))
-      return primitiveVideoTransformCache.get(item)
+    const cached = videoTransformCache.get(key)
+    if (cached && cached.item === item)
+      return cached.video
 
     const video = props.transformItem(item)
-
-    primitiveVideoTransformCache.set(item, video)
+    videoTransformCache.set(key, { item, video })
     return video
   }
   catch {
     return undefined
   }
 }
+
+watch(gridContainerRef, () => {
+  setupContainerResizeObserver()
+  itemVirtualizer.value.measure()
+})
+
+watch(
+  [currentColumnCount, () => props.gridLayout, () => settings.value.videoCardLayout],
+  () => {
+    itemVirtualizer.value.measure()
+  },
+  { flush: 'post' },
+)
+
+watch(
+  () => limitedDisplayItems.value.length,
+  () => {
+    itemVirtualizer.value.measure()
+  },
+  { flush: 'post' },
+)
 
 // 处理登录
 function handleLogin() {
@@ -750,28 +1022,41 @@ function getUniqueKey(item: T, index: number): string | number {
       v-else
       ref="gridContainerRef"
       class="video-card-grid-container"
+      :class="{ 'is-firefox': isFirefox }"
       m="b-0 t-0" relative w-full
       :style="gridContainerStyle"
     >
-      <!-- Grid 内容（统一渲染，避免 v-if/v-else 切换导致的滚动跳动） -->
-      <div :class="gridClass">
-        <VideoCard
+      <div
+        class="virtual-rows"
+        :style="{ height: `${virtualTotalHeight}px` }"
+      >
+        <div
           v-for="renderItem in renderItems"
           :key="renderItem.key"
-          v-memo="[renderItem.key, renderItem.skeleton, renderItem.type, renderItem.video, showPreview, showWatchLater, isHorizontal, moreBtn]"
-          :skeleton="renderItem.skeleton"
-          :type="renderItem.type"
-          :video="renderItem.video"
-          :show-preview="showPreview"
-          :show-watcher-later="showWatchLater"
-          :horizontal="isHorizontal"
-          :more-btn="moreBtn"
-          :is-following-page="props.isFollowingPage"
+          :ref="(el) => itemVirtualizer.measureElement(el as HTMLElement | null)"
+          :data-index="renderItem.index"
+          class="virtual-item"
+          :style="{
+            top: `${renderItem.start}px`,
+            left: `${renderItem.lane * (virtualItemWidth + currentGridGap)}px`,
+            width: `${virtualItemWidth}px`,
+          }"
         >
-          <template v-for="(_, name) in $slots" #[name]>
-            <slot :name="name" :item="renderItem.item" />
-          </template>
-        </VideoCard>
+          <VideoCard
+            :skeleton="renderItem.skeleton"
+            :type="renderItem.type"
+            :video="renderItem.video"
+            :show-preview="showPreview"
+            :show-watcher-later="showWatchLater"
+            :horizontal="isHorizontal"
+            :more-btn="moreBtn"
+            :is-following-page="props.isFollowingPage"
+          >
+            <template v-for="(_, name) in $slots" #[name]>
+              <slot :name="name" :item="renderItem.item" />
+            </template>
+          </VideoCard>
+        </div>
       </div>
 
       <div ref="loadMoreSentinelRef" class="load-more-sentinel" aria-hidden="true" />
@@ -824,16 +1109,10 @@ function getUniqueKey(item: T, index: number): string | number {
 
 .grid-two-columns {
   display: grid;
-  grid-template-columns: repeat(1, 1fr);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 16px;
   contain: layout style;
   align-items: stretch;
-}
-
-@media (min-width: 1280px) {
-  .grid-two-columns {
-    grid-template-columns: repeat(2, 1fr);
-  }
 }
 
 @supports (container-type: inline-size) {
@@ -843,10 +1122,6 @@ function getUniqueKey(item: T, index: number): string | number {
 
   .grid-adaptive {
     grid-template-columns: repeat(var(--grid-cols-base, 1), 1fr);
-  }
-
-  .grid-two-columns {
-    grid-template-columns: repeat(1, 1fr);
   }
 
   @container (min-width: 640px) {
@@ -871,10 +1146,6 @@ function getUniqueKey(item: T, index: number): string | number {
     .grid-adaptive {
       grid-template-columns: repeat(var(--grid-cols-xl, 5), 1fr);
     }
-
-    .grid-two-columns {
-      grid-template-columns: repeat(2, 1fr);
-    }
   }
 
   @container (min-width: 1536px) {
@@ -892,10 +1163,45 @@ function getUniqueKey(item: T, index: number): string | number {
   align-items: stretch;
 }
 
+.virtual-rows {
+  position: relative;
+  width: 100%;
+  contain: layout style;
+  overflow-anchor: none;
+}
+
+.virtual-item {
+  position: absolute;
+  left: 0;
+  contain: layout style;
+  overflow-anchor: none;
+  overflow: visible;
+
+  &:hover,
+  &:focus-within {
+    z-index: 2;
+  }
+
+  :deep(.video-card-container) {
+    content-visibility: visible;
+    contain-intrinsic-size: auto none;
+  }
+}
+
+.video-card-grid-container {
+  overflow-anchor: none;
+
+  &.is-firefox :deep(.video-card-container) {
+    content-visibility: visible;
+    contain-intrinsic-size: auto none;
+  }
+}
+
 :deep(.video-card-container) {
   contain: layout style;
   content-visibility: auto;
-  contain-intrinsic-size: auto none;
+  overflow-anchor: none;
+  contain-intrinsic-size: auto 360px 260px;
   min-width: 0;
 }
 

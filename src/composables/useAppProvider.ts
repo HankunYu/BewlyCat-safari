@@ -22,11 +22,13 @@ export interface BewlyAppProvider {
   activatedPage: Ref<AppPage>
   // 添加Home页面的子页面状态
   homeActivatedPage: Ref<HomeSubPage>
+  homeActivatedPageTouched: Ref<boolean>
   scrollViewportRef: Ref<HTMLElement | null>
   reachTop: Ref<boolean>
   mainAppRef: Ref<HTMLElement>
   handleReachBottom: Ref<(() => void) | undefined>
   handlePageRefresh: Ref<(() => void) | undefined>
+  canRefreshHomeSubPage: Ref<boolean>
   // 添加撤销刷新的处理函数
   handleUndoRefresh: Ref<(() => void) | undefined>
   handleForwardRefresh: Ref<(() => void) | undefined>

@@ -27,11 +27,20 @@ const headerShow = ref(true)
 const iframeRef = ref<HTMLIFrameElement | null>(null)
 const currentUrl = ref<string>(props.url)
 const showIframe = ref<boolean>(false)
+const renderIframe = ref<boolean>(true)
+const iframeKey = ref(0)
 const delayCloseTimer = ref<NodeJS.Timeout | null>(null)
 const removeTopBarClassInjected = ref<boolean>(false)
 const originUrl = ref<string>()
 const isPageFullscreen = ref<boolean>(false)
 const isPageScrollLocked = ref(false)
+const isEscPressed = ref<boolean>(false)
+const escPressedTimer = ref<NodeJS.Timeout | null>(null)
+const disableEscPress = ref<boolean>(false)
+let stopIframePushStateListener: (() => void) | null = null
+let stopIframePopStateListener: (() => void) | null = null
+let stopIframeDOMContentLoadedListener: (() => void) | null = null
+let focusRetryTimer: ReturnType<typeof setTimeout> | null = null
 
 // 计算iframe容器的样式
 const iframeContainerClasses = computed(() => {
@@ -109,65 +118,122 @@ watch(() => showIframe.value, (newValue) => {
   }
 })
 
-function setupIframeListeners() {
-  if (!(iframeRef.value && iframeRef.value.contentWindow)) {
+watch(() => props.url, async (newUrl, oldUrl) => {
+  if (!show.value || newUrl === oldUrl)
+    return
+
+  history.replaceState(null, '', newUrl.replace(/\/$/, ''))
+  await remountIframe(newUrl)
+})
+
+function cleanupIframeWindowListeners() {
+  stopIframePushStateListener?.()
+  stopIframePopStateListener?.()
+  stopIframeDOMContentLoadedListener?.()
+  stopIframePushStateListener = null
+  stopIframePopStateListener = null
+  stopIframeDOMContentLoadedListener = null
+}
+
+function clearFocusRetryTimer() {
+  if (focusRetryTimer) {
+    clearTimeout(focusRetryTimer)
+    focusRetryTimer = null
+  }
+}
+
+function focusIframe(retryCount = 3) {
+  clearFocusRetryTimer()
+
+  nextTick(() => {
+    requestAnimationFrame(() => {
+      const iframe = iframeRef.value
+      if (!iframe || !show.value || activeDrawer.value !== DrawerType.IframeDrawer)
+        return
+
+      iframe.focus({ preventScroll: true })
+      try {
+        iframe.contentWindow?.focus()
+      }
+      catch {
+        // Cross-origin frames may block direct window focus.
+      }
+
+      if (retryCount > 0) {
+        focusRetryTimer = setTimeout(() => {
+          focusIframe(retryCount - 1)
+        }, 120)
+      }
+    })
+  })
+}
+
+function injectStyleClass() {
+  if (headerShow.value && iframeRef.value?.contentWindow?.document) {
+    try {
+      iframeRef.value.contentWindow.document.documentElement.classList.add('remove-top-bar-without-placeholder')
+      removeTopBarClassInjected.value = true
+    }
+    catch (error) {
+      console.warn('Failed to inject style class:', error)
+    }
+  }
+}
+
+function handleIframeLoad() {
+  const iframeWindow = iframeRef.value?.contentWindow
+  if (!iframeWindow) {
     console.error('Iframe or contentWindow is not available')
     return
   }
 
-  // 尽早注入样式类，避免顶栏闪烁
-  const injectStyleClass = () => {
-    if (headerShow.value && iframeRef.value?.contentWindow?.document) {
-      try {
-        iframeRef.value.contentWindow.document.documentElement.classList.add('remove-top-bar-without-placeholder')
-        removeTopBarClassInjected.value = true
-      }
-      catch (error) {
-        console.warn('Failed to inject style class:', error)
-      }
-    }
-  }
-
-  // 在 iframe 加载时立即尝试注入
-  useEventListener(iframeRef.value, 'load', () => {
-    injectStyleClass()
-
-    useEventListener(iframeRef.value?.contentWindow, 'pushstate', updateCurrentUrl)
-    useEventListener(iframeRef.value?.contentWindow, 'popstate', updateCurrentUrl)
-
-    // DOMContentLoaded 时再次确保已注入
-    useEventListener(iframeRef.value?.contentWindow, 'DOMContentLoaded', () => {
-      injectStyleClass()
-    })
-
-    iframeRef.value?.focus()
-  })
+  cleanupIframeWindowListeners()
+  injectStyleClass()
+  stopIframePushStateListener = useEventListener(iframeWindow, 'pushstate', updateCurrentUrl)
+  stopIframePopStateListener = useEventListener(iframeWindow, 'popstate', updateCurrentUrl)
+  stopIframeDOMContentLoadedListener = useEventListener(iframeWindow, 'DOMContentLoaded', injectStyleClass)
+  showIframe.value = true
+  focusIframe()
 }
+
+async function remountIframe(url: string) {
+  await releaseIframeResources()
+  currentUrl.value = url
+  iframeKey.value += 1
+  renderIframe.value = true
+  await nextTick()
+}
+
 onMounted(() => {
   console.log('[IframeDrawer] onMounted called')
   originUrl.value = window.location.href
   history.pushState(null, '', props.url)
   show.value = true
   headerShow.value = true
+  currentUrl.value = props.url
+  renderIframe.value = true
   setActiveDrawer(DrawerType.IframeDrawer) // 设置为当前活跃抽屉
   console.log('[IframeDrawer] show.value:', show.value, 'activeDrawer:', activeDrawer.value)
   if (!isPageScrollLocked.value) {
     lockPageScroll()
     isPageScrollLocked.value = true
   }
-  nextTick(() => {
-    if (iframeRef.value) {
-      setupIframeListeners()
-    }
-  })
 })
 
-onBeforeUnmount(() => {
+onBeforeUnmount(async () => {
+  cleanupIframeWindowListeners()
   if (isPageScrollLocked.value) {
     unlockPageScroll()
     isPageScrollLocked.value = false
   }
-  releaseIframeResources()
+  if (delayCloseTimer.value) {
+    clearTimeout(delayCloseTimer.value)
+  }
+  if (escPressedTimer.value) {
+    clearTimeout(escPressedTimer.value)
+  }
+  clearFocusRetryTimer()
+  await releaseIframeResources()
 })
 
 onUnmounted(() => {
@@ -221,23 +287,31 @@ async function handleClose() {
 }
 
 async function releaseIframeResources() {
-  // Clear iframe content
+  clearFocusRetryTimer()
+  cleanupIframeWindowListeners()
+  showIframe.value = false
+  removeTopBarClassInjected.value = false
+
+  // Navigate to about:blank and close browsing context BEFORE removing from DOM.
+  // Previously, renderIframe was set to false first, which removed the iframe via v-if
+  // and made iframeRef null — so contentWindow.close() was never actually called.
+  // This is especially important for Firefox which doesn't always release media
+  // resources (video decoders, buffers) when an iframe is simply removed from DOM.
   currentUrl.value = 'about:blank'
-  /**
-   * eg: When use 'iframeRef.value?.contentWindow?.document' of t.bilibili.com iframe on bilibili.com, there may be cross domain issues
-   * set the src to 'about:blank' to avoid this issue, it also can release the memory
-   */
   if (iframeRef.value) {
     iframeRef.value.src = 'about:blank'
   }
-  await nextTick()
-  iframeRef.value?.contentWindow?.close()
 
-  // Remove iframe from the DOM
-  iframeRef.value?.parentNode?.removeChild(iframeRef.value)
-  await nextTick()
+  try {
+    iframeRef.value?.contentWindow?.close()
+  }
+  catch {
+    // Cross-origin may block this
+  }
 
-  // Nullify the reference
+  // Now safe to remove from DOM
+  renderIframe.value = false
+  await nextTick()
   iframeRef.value = null
 }
 
@@ -247,10 +321,6 @@ function handleOpenInNewTab() {
     handleClose()
   }
 }
-
-const isEscPressed = ref<boolean>(false)
-const escPressedTimer = ref<NodeJS.Timeout | null>(null)
-const disableEscPress = ref<boolean>(false)
 
 /**
  * Listen to Escape key on the main window using capture phase
@@ -444,18 +514,21 @@ watchEffect(() => {
       >
         <Transition name="fade">
           <iframe
+            v-if="renderIframe"
             v-show="showIframe"
+            :key="iframeKey"
             ref="iframeRef"
-            :src="props.url"
+            :src="currentUrl"
             sandbox="allow-same-origin allow-scripts allow-popups allow-forms allow-modals"
             :style="iframeStyles"
             frameborder="0"
+            tabindex="-1"
             pointer-events-auto
             :pos="isPageFullscreen ? undefined : 'relative left-0'"
             allow="fullscreen"
             w-full
             h-full
-            @load="showIframe = true"
+            @load="handleIframeLoad"
           />
         </Transition>
       </div>

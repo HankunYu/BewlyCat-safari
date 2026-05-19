@@ -1,6 +1,7 @@
 <script lang="ts" setup>
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 
+import SmoothLoading from '~/components/SmoothLoading.vue'
 import VideoCardGrid from '~/components/VideoCardGrid.vue'
 import { useBewlyApp } from '~/composables/useAppProvider'
 import type { GridLayoutType } from '~/logic'
@@ -305,20 +306,28 @@ defineExpose({
       {{ error }}
     </div>
 
-    <VideoCardGrid
-      v-else
-      :items="results || []"
-      :grid-layout="gridLayout"
-      :loading="isLoading"
-      :no-more-content="paginationMode === 'scroll' && !hasMore"
-      :request-failed="!!error"
-      :transform-item="transformVideo"
-      :get-item-key="(video: any) => video.aid || video.id"
-      :empty-description="$t('common.no_data')"
-      enable-row-padding
-      show-preview
-      @load-more="handleLoadMore"
-    />
+    <template v-else>
+      <VideoCardGrid
+        :items="results || []"
+        :grid-layout="gridLayout"
+        :loading="isLoading"
+        :no-more-content="paginationMode === 'scroll' && !hasMore"
+        :request-failed="!!error"
+        :transform-item="transformVideo"
+        :get-item-key="(video: any) => video.aid || video.id"
+        :empty-description="$t('common.no_data')"
+        :show-loading-more-skeleton="false"
+        enable-row-padding
+        show-preview
+        @load-more="handleLoadMore"
+      />
+
+      <SmoothLoading
+        v-if="paginationMode === 'scroll' && (results?.length || 0) > 0 && hasMore"
+        :show="isLoading"
+        :keep-space="true"
+      />
+    </template>
 
     <!-- 翻页模式 -->
     <Pagination

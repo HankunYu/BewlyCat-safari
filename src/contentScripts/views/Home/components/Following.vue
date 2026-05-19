@@ -137,7 +137,7 @@ interface VideoElement {
   isLive?: boolean
 }
 
-const props = withDefaults(defineProps<Props>(), {
+withDefaults(defineProps<Props>(), {
   gridLayout: 'adaptive',
   topBarVisibility: true,
 })
@@ -149,7 +149,7 @@ const emit = defineEmits<{
 
 useI18n()
 
-const { scrollViewportRef, handlePageRefresh } = useBewlyApp()
+const { scrollViewportRef, handlePageRefresh, canRefreshHomeSubPage } = useBewlyApp()
 const videoList = ref<VideoElement[]>([])
 const uploaderList = ref<UploaderInfo[]>([])
 const selectedUploader = ref<number | null>(null) // null means "All"
@@ -165,7 +165,7 @@ const isLoading = ref<boolean>(false)
 const requestFailed = ref<boolean>(false)
 const noMoreContent = ref<boolean>(false)
 const needToLoginFirst = ref<boolean>(false)
-const shouldMoveAsideUp = ref<boolean>(false)
+const isRefreshContextActive = ref<boolean>(false)
 
 // 分别管理ALL和单个UP主的分页状态
 const allViewOffset = ref<string>('')
@@ -174,18 +174,11 @@ const userMomentsOffset = ref<string>('')
 
 const currentUserMid = ref<number>(0) // 当前登录用户的mid
 
-// Watch topBarVisibility to control aside position
-watch(() => props.topBarVisibility, () => {
-  shouldMoveAsideUp.value = false
+function syncRefreshAvailability() {
+  canRefreshHomeSubPage.value = isRefreshContextActive.value && selectedUploader.value === null
+}
 
-  // Allow moving tabs up only when the top bar is not hidden & is set to auto-hide
-  if (settings.value.autoHideTopBar && settings.value.showTopBar) {
-    if (props.topBarVisibility)
-      shouldMoveAsideUp.value = false
-    else
-      shouldMoveAsideUp.value = true
-  }
-})
+watch(selectedUploader, syncRefreshAvailability, { immediate: true })
 
 // Track viewed uploaders in localStorage
 const VIEWED_UPLOADERS_KEY = 'bewlycat_moments_viewed_uploaders'
@@ -827,8 +820,8 @@ async function loadSingleUploaderTime(mid: number, retryCount: number = 0) {
 
             console.log(`[Following] Updated time for UP ${mid} (${loadedUploaderTimesCount.value}/${uploaderList.value.length})${updateInterval ? `, interval: ${Math.round(updateInterval / (24 * 60 * 60 * 1000))}d` : ''}`)
 
-            // 检查是否应该加入黑名单（超过指定天数未更新）
-            if (shouldBeBlacklisted(uploader)) {
+            // 检查是否应该加入不活跃名单（超过指定天数未更新）
+            if (settings.value.enableFollowingInactiveBlacklist && shouldBeBlacklisted(uploader)) {
               addToBlacklist(mid)
             }
 
@@ -843,7 +836,7 @@ async function loadSingleUploaderTime(mid: number, retryCount: number = 0) {
       else {
         // API返回成功但没有视频数据，该UP主完全没有投稿，添加到黑名单
         const uploader = uploaderList.value.find(u => u.mid === mid)
-        if (uploader) {
+        if (uploader && settings.value.enableFollowingInactiveBlacklist) {
           addToBlacklist(mid)
           console.log(`[Following] No video data for UP ${mid}, added to blacklist`)
         }
@@ -1522,6 +1515,8 @@ function jumpToLoginPage() {
 }
 
 onMounted(() => {
+  isRefreshContextActive.value = true
+  syncRefreshAvailability()
   initData()
 
   // 确保在 nextTick 中调用，以保证所有依赖都已准备好
@@ -1531,7 +1526,19 @@ onMounted(() => {
 })
 
 onActivated(() => {
+  isRefreshContextActive.value = true
+  syncRefreshAvailability()
   initPageAction()
+})
+
+onDeactivated(() => {
+  isRefreshContextActive.value = false
+  syncRefreshAvailability()
+})
+
+onUnmounted(() => {
+  isRefreshContextActive.value = false
+  syncRefreshAvailability()
 })
 
 function initPageAction() {
@@ -1555,7 +1562,6 @@ defineExpose({ initData })
     <aside
       pos="sticky top-150px" h="[calc(100vh-140px)]" w-200px shrink-0 duration-300
       ease-in-out
-      :class="{ hide: shouldMoveAsideUp }"
     >
       <div h-inherit p="x-20px b-20px t-8px" m--20px of-y-auto of-x-hidden>
         <!-- Search Box -->
@@ -1679,10 +1685,6 @@ defineExpose({ initData })
   .secondary-text {
     --uno: "text-$bew-text-auto opacity-85";
   }
-}
-
-.hide {
-  --uno: "h-[calc(100vh-70px)] translate-y--70px";
 }
 
 /* TransitionGroup 列表过渡效果 */

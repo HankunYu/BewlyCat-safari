@@ -15,7 +15,7 @@ import { initFavoriteDialogEnhancement } from '~/utils/favoriteDialog'
 import { runWhenIdle } from '~/utils/lazyLoad'
 import { getLocalWallpaper, hasLocalWallpaper, isLocalWallpaperUrl } from '~/utils/localWallpaper'
 import { compareVersions, injectCSS, isElectron, isHomePage, isInIframe, isNotificationPage, isVideoOrBangumiPage } from '~/utils/main'
-import { applyAutoPlayByVideoType, applyDefaultDanmakuState, defaultMode, handleVideoPageNavigation, isCollectionVideo, isVideoPage, startAutoExitFullscreenMonitoring, startAutoPlayUserChangeMonitoring, webFullscreen, widescreen } from '~/utils/player'
+import { applyAutoPlayByVideoType, applyDefaultDanmakuState, defaultMode, handleVideoPageNavigation, isCollectionVideo, isPlayerDisplayModeReady, isVideoPage, startAutoExitFullscreenMonitoring, startAutoPlayUserChangeMonitoring, webFullscreen, widescreen } from '~/utils/player'
 import { initRandomPlay, resetRandomPlayInitialization } from '~/utils/randomPlay'
 import { setupShortcutHandlers } from '~/utils/shortcuts'
 import { SVG_ICONS } from '~/utils/svgIcons'
@@ -148,7 +148,9 @@ else {
 
   let beforeLoadedStyleEl: HTMLStyleElement | undefined
   let lastUrl = location.href
+  let lastVideoNavigationKey = getVideoNavigationKey(location.href)
   let hasAppliedPlayerMode = false // 添加标志变量
+  let playerModeRetryTimer: ReturnType<typeof setTimeout> | undefined
   let watchLaterButtonAdded = false // 标记稍后再看按钮是否已添加
 
   if (isSupportedPages() || isSupportedIframePages()) {
@@ -214,6 +216,11 @@ else {
 
   // 应用默认播放器模式
   function applyDefaultPlayerMode() {
+    if (!isVideoOrBangumiPage()) {
+      clearPlayerModeRetry()
+      return
+    }
+
     if (hasAppliedPlayerMode)
       return // 如果已经应用过，直接返回
 
@@ -229,18 +236,28 @@ else {
     }
 
     const playerMode = settings.value.defaultVideoPlayerMode
+    const targetPlayerMode = settings.value.keepCollectionVideoDefaultMode && isCollectionVideo()
+      ? 'default'
+      : playerMode
+
+    if (!isPlayerDisplayModeReady(targetPlayerMode)) {
+      schedulePlayerModeRetry()
+      return
+    }
+
+    clearPlayerModeRetry()
 
     // 检查是否为合集视频且启用了保持默认模式
-    if (settings.value.keepCollectionVideoDefaultMode && isCollectionVideo()) {
+    if (targetPlayerMode === 'default' && settings.value.keepCollectionVideoDefaultMode) {
     // 合集视频强制使用默认模式
       defaultMode()
     }
-    else if (!playerMode || playerMode === 'default') {
+    else if (!targetPlayerMode || targetPlayerMode === 'default') {
     // 默认模式也需要居中显示
       defaultMode()
     }
     else {
-      switch (playerMode) {
+      switch (targetPlayerMode) {
         case 'webFullscreen':
           webFullscreen()
           break
@@ -263,6 +280,23 @@ else {
 
     // 延迟添加稍后再看按钮
     scheduleAddWatchLaterButton()
+  }
+
+  function clearPlayerModeRetry() {
+    if (playerModeRetryTimer) {
+      clearTimeout(playerModeRetryTimer)
+      playerModeRetryTimer = undefined
+    }
+  }
+
+  function schedulePlayerModeRetry() {
+    if (playerModeRetryTimer)
+      return
+
+    playerModeRetryTimer = setTimeout(() => {
+      playerModeRetryTimer = undefined
+      applyDefaultPlayerMode()
+    }, document.visibilityState === 'visible' ? 500 : 1000)
   }
 
   // 延迟添加稍后再看按钮
@@ -293,17 +327,58 @@ else {
     }
   }
 
+  function getVideoNavigationKey(url: string) {
+    try {
+      const urlObj = new URL(url)
+      if (!isVideoOrBangumiPage(urlObj.href))
+        return ''
+
+      const semanticParams = [
+        'avid',
+        'bvid',
+        'cid',
+        'ep_id',
+        'p',
+        'page',
+        'season_id',
+      ]
+      const params = new URLSearchParams()
+
+      for (const param of semanticParams) {
+        const value = urlObj.searchParams.get(param)
+        if (value !== null)
+          params.set(param, value)
+      }
+
+      const query = params.toString()
+      return `${urlObj.origin}${urlObj.pathname}${query ? `?${query}` : ''}`
+    }
+    catch {
+      return url.split('?')[0].split('#')[0]
+    }
+  }
+
   function checkForUrlChanges() {
     if (location.href !== lastUrl) {
-      lastUrl = location.href
-      hasAppliedPlayerMode = false // URL变化时重置标志
-      watchLaterButtonAdded = false // URL变化时重置稍后再看按钮标志
-      // 不再重置用户手动修改标志，保持用户的自动播放偏好设置
+      const currentVideoNavigationKey = getVideoNavigationKey(location.href)
+      const isMeaningfulVideoNavigation = currentVideoNavigationKey !== lastVideoNavigationKey
 
-      // 重置随机播放初始化状态，避免重复加载
-      resetRandomPlayInitialization()
+      lastUrl = location.href
+      lastVideoNavigationKey = currentVideoNavigationKey
 
       if (isVideoOrBangumiPage()) {
+        if (!isMeaningfulVideoNavigation) {
+          scheduleUrlChangeCheck()
+          return
+        }
+
+        hasAppliedPlayerMode = false // URL变化时重置标志
+        watchLaterButtonAdded = false // URL变化时重置稍后再看按钮标志
+        // 不再重置用户手动修改标志，保持用户的自动播放偏好设置
+
+        // 重置随机播放初始化状态，避免重复加载
+        resetRandomPlayInitialization()
+
         applyDefaultPlayerMode()
         // 如果是视频页面内部跳转，延迟执行滚动
         if (isVideoOrBangumiPage()) {
@@ -317,9 +392,17 @@ else {
         }
       }
     }
-    requestAnimationFrame(checkForUrlChanges)
+    scheduleUrlChangeCheck()
   }
-  requestAnimationFrame(checkForUrlChanges)
+
+  function scheduleUrlChangeCheck() {
+    if (document.visibilityState === 'visible')
+      requestAnimationFrame(checkForUrlChanges)
+    else
+      setTimeout(checkForUrlChanges, 1000)
+  }
+
+  scheduleUrlChangeCheck()
 
   // 处理页面可见性变化
   function handleVisibilityChange() {
@@ -416,6 +499,7 @@ else {
       injectCSS(`
       /* Hide Bilibili's own page elements, preserving third-party extensions (e.g., Bili-Evolved) */
       body > #app,
+      body > #i_cecream,
       .home-redesign-base,
       .bilibili-gate-root {
         display: none !important;

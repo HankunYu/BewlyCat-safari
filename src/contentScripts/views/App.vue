@@ -105,8 +105,33 @@ if (activatedPage.value !== AppPage.Search && activatedPage.value !== AppPage.Se
   topBarStore.searchKeyword = ''
 }
 
+function isFreshHomeTabConfig(tabConfig: { page: HomeSubPage, visible: boolean }[]): boolean {
+  return tabConfig.length === mainStore.homeTabs.length
+    && tabConfig.every(tab => mainStore.homeTabs.some(defaultTab => defaultTab.page === tab.page))
+}
+
+function getDefaultHomeSubPage(tabConfig: { page: HomeSubPage, visible: boolean }[]): HomeSubPage {
+  if (isFreshHomeTabConfig(tabConfig))
+    return tabConfig.find(tab => tab.visible)?.page ?? HomeSubPage.ForYou
+
+  return HomeSubPage.ForYou
+}
+
 // 添加Home页面的子页面状态
-const homeActivatedPage = ref<HomeSubPage>(HomeSubPage.ForYou)
+const homeActivatedPage = ref<HomeSubPage>(getDefaultHomeSubPage(settings.value.homePageTabVisibilityList))
+const homeActivatedPageTouched = ref<boolean>(false)
+watch(
+  () => settings.value.homePageTabVisibilityList,
+  (tabConfig) => {
+    if (homeActivatedPageTouched.value)
+      return
+
+    const defaultHomeSubPage = getDefaultHomeSubPage(tabConfig)
+    if (homeActivatedPage.value !== defaultHomeSubPage)
+      homeActivatedPage.value = defaultHomeSubPage
+  },
+  { deep: true, immediate: true },
+)
 const pages = {
   [AppPage.Home]: defineAsyncComponent(() => import('./Home/Home.vue')),
   [AppPage.Search]: defineAsyncComponent(() => import('./Search/Search.vue')),
@@ -124,9 +149,16 @@ const handlePageRefresh = ref<() => void>()
 const handleReachBottom = ref<() => void>()
 const handleUndoRefresh = ref<() => void>()
 const handleForwardRefresh = ref<() => void>()
+const canRefreshHomeSubPage = ref<boolean>(false)
 // 使用新的枚举状态管理撤销/前进按钮
 const undoForwardState = ref<UndoForwardState>(UndoForwardState.Hidden)
+const canRefreshCurrentPage = computed((): boolean => {
+  return activatedPage.value !== AppPage.Home || homeActivatedPage.value === HomeSubPage.ForYou || canRefreshHomeSubPage.value
+})
 const handleThrottledPageRefresh = useThrottleFn(() => {
+  if (!canRefreshCurrentPage.value)
+    return
+
   const viewport = scrollViewportRef.value
   if (!viewport) {
     handlePageRefresh.value?.()
@@ -304,6 +336,31 @@ const showTopBar = computed((): boolean => {
     || !isHomePage()
 })
 
+function getActiveElement(): Element | null {
+  const shadowRoot = document.getElementById('bewly')?.shadowRoot
+  return shadowRoot?.activeElement || document.activeElement
+}
+
+function isEditableElement(element: Element | null): boolean {
+  return element instanceof HTMLInputElement
+    || element instanceof HTMLTextAreaElement
+    || element instanceof HTMLSelectElement
+    || (element instanceof HTMLElement && (element.isContentEditable || !!element.closest('[contenteditable="true"]')))
+}
+
+function focusScrollViewport(options: { force?: boolean } = {}) {
+  nextTick(() => {
+    const viewport = scrollViewportRef.value
+    if (!viewport || !showBewlyPage.value)
+      return
+
+    if (!options.force && (showSettings.value || activeDrawer.value !== DrawerType.None || isEditableElement(getActiveElement())))
+      return
+
+    viewport.focus({ preventScroll: true })
+  })
+}
+
 const isFirstTimeActivatedPageChange = ref<boolean>(true)
 watch(
   () => activatedPage.value,
@@ -316,9 +373,19 @@ watch(
     }
 
     scrollViewportRef.value?.scrollTo({ top: 0 })
+    focusScrollViewport()
     isFirstTimeActivatedPageChange.value = false
   },
   { immediate: true },
+)
+
+watch(
+  () => showBewlyPage.value,
+  (visible) => {
+    if (visible)
+      focusScrollViewport()
+  },
+  { immediate: true, flush: 'post' },
 )
 
 watch([() => showTopBar.value, () => activatedPage.value], () => {
@@ -369,22 +436,12 @@ onMounted(() => {
     // Force overwrite Bilibili Evolved body tag & html tag background color
     document.body.style.setProperty('background-color', 'unset', 'important')
 
-    // 聚焦到滚动容器的函数
-    const focusScrollContainer = () => {
-      nextTick(() => {
-        const viewport = scrollViewportRef.value
-        if (!viewport)
-          return
-
-        viewport.setAttribute('tabindex', '0')
-        viewport.focus({ preventScroll: true })
-      })
-    }
+    focusScrollViewport()
 
     // Windows/Linux: 监听 Home 键
     onKeyStroke('Home', (e) => {
       handleThrottledBackToTop()
-      focusScrollContainer()
+      focusScrollViewport({ force: true })
       e.preventDefault()
     })
 
@@ -393,7 +450,7 @@ onMounted(() => {
       // 确保只有同时按下 Command 和 ArrowUp 键时才触发
       if (e.key === 'ArrowUp' && e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey) {
         handleThrottledBackToTop()
-        focusScrollContainer()
+        focusScrollViewport({ force: true })
         e.preventDefault()
       }
     })
@@ -558,6 +615,7 @@ function openIframeDrawer(url: string) {
     return
   }
 
+  setActiveDrawer(DrawerType.IframeDrawer)
   iframeDrawerURL.value = url
   showIframeDrawer.value = true
 }
@@ -607,11 +665,13 @@ watchEffect(async (onCleanUp) => {
 provide<BewlyAppProvider>('BEWLY_APP', {
   activatedPage,
   homeActivatedPage,
+  homeActivatedPageTouched,
   mainAppRef,
   scrollViewportRef,
   reachTop,
   handleBackToTop,
   handlePageRefresh,
+  canRefreshHomeSubPage,
   handleReachBottom,
   handleUndoRefresh,
   handleForwardRefresh,
@@ -832,7 +892,7 @@ if (settings.value.cleanUrlArgument) {
       <BewlyOrBiliTopBarSwitcher v-if="settings.showBewlyOrBiliTopBarSwitcher" />
 
       <TopBar
-        pos="top-0 left-0" z="99 hover:1001" w-full
+        pos="top-0 left-0" z="1 hover:1001" w-full
       />
     </div>
 
@@ -847,7 +907,9 @@ if (settings.value.cleanUrlArgument) {
         <template v-if="showBewlyPage">
           <div
             ref="scrollViewportRef"
+            class="bewly-scroll-viewport"
             h-inherit of-y-auto of-x-hidden
+            tabindex="-1"
             style="overscroll-behavior: contain;"
             @scroll.passive="handleNativeScroll"
           >
@@ -887,5 +949,9 @@ if (settings.value.cleanUrlArgument) {
   > * > * {
     filter: var(--bew-filter-force-dark);
   }
+}
+
+.bewly-scroll-viewport {
+  outline: none;
 }
 </style>
