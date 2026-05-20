@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import Button from '~/components/Button.vue' // Assuming Button component exists
@@ -100,6 +100,11 @@ const configurableShortcutsGroups: ShortcutGroup[] = [
 // --- Reactive State ---
 const editingShortcutId = ref<ConfigurableShortcutId | null>(null)
 const currentKeyCombo = ref<string[]>([])
+
+// Watch for keyboard toggle changes to properly register/unregister shortcuts
+watch(() => settings.value.keyboard, () => {
+  setupShortcutHandlers()
+})
 
 // --- Helper Functions ---
 function getShortcutSetting(id: ConfigurableShortcutId): BaseShortcutSetting | undefined {
