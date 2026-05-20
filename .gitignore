@@ -23,3 +23,4 @@ node_modules
 extension-safari-macos/
 # src/old-extension/
 .playwright-mcp/
+extension-safari-xcode

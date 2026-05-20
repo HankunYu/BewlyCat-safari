@@ -1,132 +1,87 @@
 /**
  * Safari Xcode project post-processing script
- * Adds App Groups entitlements to fix storage persistence after system restart
+ * - Configures automatic signing with Development Team
+ * - Adds ITSAppUsesNonExemptEncryption declaration for TestFlight
  */
 import path from 'node:path'
 import process from 'node:process'
 
 import fs from 'fs-extra'
 
-const BUNDLE_IDENTIFIER = 'com.hankun.BewlyCat'
-const APP_GROUP = `group.${BUNDLE_IDENTIFIER}`
+const DEVELOPMENT_TEAM = '47GJJ2S5J8'
 
 const XCODE_PROJECT_DIR = './extension-safari-xcode/BewlyCat'
-const APP_DIR = path.join(XCODE_PROJECT_DIR, 'BewlyCat')
-const EXT_DIR = path.join(XCODE_PROJECT_DIR, 'BewlyCat Extension')
 const PBXPROJ_PATH = path.join(XCODE_PROJECT_DIR, 'BewlyCat.xcodeproj/project.pbxproj')
 
-// Entitlements content for main app
-const APP_ENTITLEMENTS = `<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>com.apple.security.app-sandbox</key>
-    <true/>
-    <key>com.apple.security.network.client</key>
-    <true/>
-    <key>com.apple.security.application-groups</key>
-    <array>
-        <string>${APP_GROUP}</string>
-    </array>
-</dict>
-</plist>
-`
+// Info.plist paths (actual structure from safari-web-extension-converter)
+const PLIST_PATHS = [
+  path.join(XCODE_PROJECT_DIR, 'macOS (App)/Info.plist'),
+  path.join(XCODE_PROJECT_DIR, 'macOS (Extension)/Info.plist'),
+  path.join(XCODE_PROJECT_DIR, 'iOS (App)/Info.plist'),
+  path.join(XCODE_PROJECT_DIR, 'iOS (Extension)/Info.plist'),
+]
 
-// Entitlements content for extension
-const EXT_ENTITLEMENTS = `<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>com.apple.security.app-sandbox</key>
-    <true/>
-    <key>com.apple.security.network.client</key>
-    <true/>
-    <key>com.apple.security.application-groups</key>
-    <array>
-        <string>${APP_GROUP}</string>
-    </array>
-</dict>
-</plist>
-`
-
-function generateUUID(): string {
-  // Generate a simple hex ID similar to Xcode's format
-  const chars = '0123456789ABCDEF'
-  let result = ''
-  for (let i = 0; i < 24; i++) {
-    result += chars[Math.floor(Math.random() * 16)]
+/**
+ * Add ITSAppUsesNonExemptEncryption to Info.plist
+ * This declares that the app does not use encryption requiring export compliance
+ */
+async function addEncryptionExemption(plistPath: string): Promise<boolean> {
+  if (!await fs.pathExists(plistPath)) {
+    console.log(`⚠️  File not found: ${plistPath}`)
+    return false
   }
-  return result
+
+  let content = await fs.readFile(plistPath, 'utf-8')
+
+  // Check if already added
+  if (content.includes('ITSAppUsesNonExemptEncryption')) {
+    console.log(`⚠️  Already configured: ${plistPath}`)
+    return true
+  }
+
+  // Add before the closing </dict> tag
+  content = content.replace(
+    /<\/dict>\s*<\/plist>/,
+    `\t<key>ITSAppUsesNonExemptEncryption</key>\n\t<false/>\n</dict>\n</plist>`,
+  )
+
+  await fs.writeFile(plistPath, content, 'utf-8')
+  console.log(`✅ Added encryption exemption: ${plistPath}`)
+  return true
 }
 
-async function createEntitlementsFiles() {
-  const appEntPath = path.join(APP_DIR, 'BewlyCat.entitlements')
-  const extEntPath = path.join(EXT_DIR, 'BewlyCat Extension.entitlements')
+async function updateInfoPlists() {
+  console.log('📝 Adding encryption exemption declarations...\n')
 
-  await fs.writeFile(appEntPath, APP_ENTITLEMENTS, 'utf-8')
-  console.log(`✅ Created: ${appEntPath}`)
-
-  await fs.writeFile(extEntPath, EXT_ENTITLEMENTS, 'utf-8')
-  console.log(`✅ Created: ${extEntPath}`)
-
-  return { appEntPath, extEntPath }
+  for (const plistPath of PLIST_PATHS) {
+    await addEncryptionExemption(plistPath)
+  }
 }
 
 async function updatePbxproj() {
+  console.log('\n🔧 Configuring automatic signing...\n')
+
   let content = await fs.readFile(PBXPROJ_PATH, 'utf-8')
 
-  // Check if entitlements are already added
-  if (content.includes('BewlyCat.entitlements')) {
-    console.log('⚠️  Entitlements already configured in project.pbxproj')
+  // Check if already configured
+  if (content.includes(`DEVELOPMENT_TEAM = ${DEVELOPMENT_TEAM}`)) {
+    console.log('⚠️  Automatic signing already configured')
     return
   }
 
-  // Generate unique IDs
-  const appEntFileRef = generateUUID()
-  const extEntFileRef = generateUUID()
-
-  // 1. Add file references in PBXFileReference section
-  const fileRefEndMarker = '/* End PBXFileReference section */'
-  const fileRefAddition = `\t\t${appEntFileRef} /* BewlyCat.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = BewlyCat.entitlements; sourceTree = "<group>"; };
-\t\t${extEntFileRef} /* BewlyCat Extension.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = "BewlyCat Extension.entitlements"; sourceTree = "<group>"; };
-${fileRefEndMarker}`
-
-  content = content.replace(fileRefEndMarker, fileRefAddition)
-
-  // 2. Add CODE_SIGN_ENTITLEMENTS to build settings
-  // For main app - match all occurrences
+  // Add CODE_SIGN_STYLE and DEVELOPMENT_TEAM before each PRODUCT_BUNDLE_IDENTIFIER
+  // This handles all targets (iOS App, iOS Extension, macOS App, macOS Extension)
   content = content.replace(
-    /(PRODUCT_BUNDLE_IDENTIFIER = com\.hankun\.BewlyCat;)(\s+)(PRODUCT_NAME|REGISTER_APP_GROUPS)/g,
-    `$1$2CODE_SIGN_ENTITLEMENTS = BewlyCat/BewlyCat.entitlements;$2$3`,
-  )
-
-  // For extension - match all occurrences
-  content = content.replace(
-    /(PRODUCT_BUNDLE_IDENTIFIER = com\.hankun\.BewlyCat\.Extension;)(\s+)(PRODUCT_NAME|SKIP_INSTALL)/g,
-    `$1$2CODE_SIGN_ENTITLEMENTS = "BewlyCat Extension/BewlyCat Extension.entitlements";$2$3`,
-  )
-
-  // 3. Add entitlements file to BewlyCat group (main app)
-  // Find the BewlyCat group and add the entitlements reference
-  const appGroupPattern = /(\/\* BewlyCat \*\/ = \{\s*isa = PBXGroup;\s*children = \()/
-  content = content.replace(
-    appGroupPattern,
-    `$1\n\t\t\t\t${appEntFileRef} /* BewlyCat.entitlements */,`,
-  )
-
-  // 4. Add entitlements file to BewlyCat Extension group
-  const extGroupPattern = /(\/\* BewlyCat Extension \*\/ = \{\s*isa = PBXGroup;\s*children = \()/
-  content = content.replace(
-    extGroupPattern,
-    `$1\n\t\t\t\t${extEntFileRef} /* BewlyCat Extension.entitlements */,`,
+    /(\t+)(PRODUCT_BUNDLE_IDENTIFIER = com\.hankun\.BewlyCat(?:\.Extension)?;)/g,
+    `$1CODE_SIGN_STYLE = Automatic;\n$1DEVELOPMENT_TEAM = ${DEVELOPMENT_TEAM};\n$1$2`,
   )
 
   await fs.writeFile(PBXPROJ_PATH, content, 'utf-8')
-  console.log(`✅ Updated: ${PBXPROJ_PATH}`)
+  console.log(`✅ Configured automatic signing with Team ID: ${DEVELOPMENT_TEAM}`)
 }
 
 async function main() {
-  console.log('🔧 Safari post-convert: Adding App Groups entitlements...\n')
+  console.log('🔧 Safari post-convert: Configuring project settings...\n')
 
   // Check if Xcode project exists
   if (!await fs.pathExists(PBXPROJ_PATH)) {
@@ -136,16 +91,16 @@ async function main() {
   }
 
   try {
-    await createEntitlementsFiles()
+    await updateInfoPlists()
     await updatePbxproj()
+
     console.log('\n✅ Safari post-convert completed!')
-    console.log(`   App Group: ${APP_GROUP}`)
+    console.log(`   Development Team: ${DEVELOPMENT_TEAM}`)
+    console.log(`   Code Sign Style: Automatic`)
+    console.log(`   Encryption Exemption: ITSAppUsesNonExemptEncryption = false`)
     console.log('\n📋 Next steps:')
-    console.log('   1. Open Xcode project: extension-safari-xcode/BewlyCat/BewlyCat.xcodeproj')
-    console.log('   2. Configure App Groups in Apple Developer Portal:')
-    console.log(`      - Register App Group: ${APP_GROUP}`)
-    console.log('      - Enable App Groups capability for both App IDs')
-    console.log('   3. In Xcode, verify Signing & Capabilities shows App Groups')
+    console.log('   1. Open: extension-safari-xcode/BewlyCat/BewlyCat.xcodeproj')
+    console.log('   2. Build and archive for TestFlight')
   }
   catch (error) {
     console.error('❌ Error:', error)
