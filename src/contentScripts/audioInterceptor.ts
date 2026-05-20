@@ -663,48 +663,69 @@ function isVideoPage(): boolean {
     || path.startsWith('/cheese/play/')
 }
 
+// Polling state — kept at module scope so the timer can be stopped when the
+// feature is disabled, instead of leaking a 1s tick forever.
+let pollTimer: ReturnType<typeof setInterval> | null = null
+let pollLastUrl: string = ''
+
+function pollTick() {
+  if (location.href !== pollLastUrl) {
+    pollLastUrl = location.href
+    if (isVideoPage()) {
+      log('URL changed')
+    }
+  }
+
+  if (!isVideoPage()) {
+    if (hasAttached) {
+      log('Not on video page, detaching')
+      detach()
+    }
+    return
+  }
+
+  if (currentVideoElement && !currentVideoElement.isConnected) {
+    log('Current video element was removed, detaching')
+    detach()
+  }
+
+  const video = getActiveVideoElement()
+  if (!video) {
+    if (hasAttached) {
+      log('Active video element missing, detaching')
+      detach()
+    }
+    return
+  }
+
+  if ((video !== currentVideoElement || !hasAttached) && settings.value.enableVolumeNormalization) {
+    log('New video element detected')
+    attachToVideo(video)
+  }
+}
+
+function startAudioInterceptorPolling() {
+  if (pollTimer)
+    return
+  pollLastUrl = location.href
+  pollTimer = setInterval(pollTick, 1000)
+}
+
+function stopAudioInterceptorPolling() {
+  if (pollTimer) {
+    clearInterval(pollTimer)
+    pollTimer = null
+  }
+}
+
 export function initAudioInterceptor() {
   if (isVideoPage()) {
     log('Initializing Audio Interceptor')
   }
 
-  let lastUrl = location.href
-
-  setInterval(() => {
-    if (location.href !== lastUrl) {
-      lastUrl = location.href
-      if (isVideoPage()) {
-        log('URL changed')
-      }
-    }
-
-    if (!isVideoPage()) {
-      if (hasAttached) {
-        log('Not on video page, detaching')
-        detach()
-      }
-      return
-    }
-
-    if (currentVideoElement && !currentVideoElement.isConnected) {
-      log('Current video element was removed, detaching')
-      detach()
-    }
-
-    const video = getActiveVideoElement()
-    if (!video) {
-      if (hasAttached) {
-        log('Active video element missing, detaching')
-        detach()
-      }
-      return
-    }
-
-    if ((video !== currentVideoElement || !hasAttached) && settings.value.enableVolumeNormalization) {
-      log('New video element detected')
-      attachToVideo(video)
-    }
-  }, 1000)
+  if (settings.value.enableVolumeNormalization) {
+    startAudioInterceptorPolling()
+  }
 }
 
 export function setupSettingsWatcher() {
@@ -712,13 +733,17 @@ export function setupSettingsWatcher() {
     log('Settings changed: enableVolumeNormalization =', newVal)
 
     if (newVal) {
+      startAudioInterceptorPolling()
       const video = getActiveVideoElement()
       if (video) {
         attachToVideo(video)
       }
     }
-    else if (currentVideoElement) {
-      updateProcessingState()
+    else {
+      stopAudioInterceptorPolling()
+      if (currentVideoElement) {
+        updateProcessingState()
+      }
     }
   })
 

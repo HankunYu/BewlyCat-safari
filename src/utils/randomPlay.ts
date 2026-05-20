@@ -8,6 +8,11 @@ let originalEndedListener: (() => void) | null = null
 let originalPauseListener: (() => void) | null = null
 let userManuallySetRandomPlay = false // 用户手动设置的随机播放状态标志
 
+// MutationObservers tracked at module scope so they can be disconnected
+let videoObserver: MutationObserver | null = null
+let pageChangeObserver: MutationObserver | null = null
+let pageChangeUrlListener: (() => void) | null = null
+
 // 获取随机播放文本
 export function getRandomPlayText(): string {
   // 尝试获取扩展设置的语言
@@ -422,8 +427,14 @@ export function enableRandomPlay(): void {
   // 立即尝试设置监听器
   setupVideoListener()
 
+  // Disconnect any previous observer before creating a new one
+  if (videoObserver) {
+    videoObserver.disconnect()
+    videoObserver = null
+  }
+
   // 监听DOM变化，如果视频元素被替换，重新设置监听器
-  const videoObserver = new MutationObserver(() => {
+  videoObserver = new MutationObserver(() => {
     const video = document.querySelector('video')
     if (video && !video.hasAttribute('data-bewly-random-play-listener')) {
       setupVideoListener()
@@ -438,6 +449,12 @@ export function enableRandomPlay(): void {
 
 // 禁用随机播放
 export function disableRandomPlay(): void {
+  // Always disconnect the DOM observer to stop heavy body-wide mutation tracking
+  if (videoObserver) {
+    videoObserver.disconnect()
+    videoObserver = null
+  }
+
   const video = document.querySelector('video')
   if (!video || (!originalEndedListener && !originalPauseListener)) {
     return
@@ -549,6 +566,10 @@ export function initRandomPlayOnVideoPage(): void {
 
 // 监听页面变化
 export function observeRandomPlayPageChanges(): void {
+  // Guard against duplicate initialization, which would leak observers / listeners
+  if (pageChangeObserver)
+    return
+
   let lastUrl = window.location.href
   let urlChangeTimeout: number | null = null
 
@@ -588,6 +609,7 @@ export function observeRandomPlayPageChanges(): void {
   }
 
   // 监听pushstate事件 - 使用捕获阶段避免冲突
+  pageChangeUrlListener = checkUrlChange
   window.addEventListener('pushstate', checkUrlChange, true)
 
   // 监听popstate事件 - 使用捕获阶段避免冲突
@@ -595,7 +617,7 @@ export function observeRandomPlayPageChanges(): void {
 
   // 使用MutationObserver监听DOM变化
   let domChangeTimeout: number | null = null
-  const observer = new MutationObserver((mutations) => {
+  pageChangeObserver = new MutationObserver((mutations) => {
     if (!isVideoPage())
       return
 
@@ -658,10 +680,23 @@ export function observeRandomPlayPageChanges(): void {
     }, 300) // 300ms防抖延迟
   })
 
-  observer.observe(document.body, {
+  pageChangeObserver.observe(document.body, {
     childList: true,
     subtree: true,
   })
+}
+
+// Tear down the page-change observer + URL listeners (exported for cleanup hooks)
+export function stopObserveRandomPlayPageChanges(): void {
+  if (pageChangeObserver) {
+    pageChangeObserver.disconnect()
+    pageChangeObserver = null
+  }
+  if (pageChangeUrlListener) {
+    window.removeEventListener('pushstate', pageChangeUrlListener, true)
+    window.removeEventListener('popstate', pageChangeUrlListener, true)
+    pageChangeUrlListener = null
+  }
 }
 
 // 初始化随机播放功能

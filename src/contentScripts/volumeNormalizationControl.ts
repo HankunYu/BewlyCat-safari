@@ -292,6 +292,34 @@ function removeControl() {
   isInjected = false
 }
 
+// SPA reinjection poller — kept at module scope so it can be torn down when
+// the feature is disabled, instead of running forever.
+let injectionTimer: ReturnType<typeof setInterval> | null = null
+let injectionLastUrl: string = ''
+
+function startInjectionPolling() {
+  if (injectionTimer)
+    return
+  injectionLastUrl = location.href
+  injectionTimer = setInterval(() => {
+    if (location.href !== injectionLastUrl) {
+      injectionLastUrl = location.href
+      isInjected = false
+    }
+
+    if (settings.value.enableVolumeNormalization && !isInjected) {
+      injectControl()
+    }
+  }, 2000)
+}
+
+function stopInjectionPolling() {
+  if (injectionTimer) {
+    clearInterval(injectionTimer)
+    injectionTimer = null
+  }
+}
+
 // 初始化
 export function initVolumeNormalizationControl() {
   // 检查是否为直播页面
@@ -302,8 +330,10 @@ export function initVolumeNormalizationControl() {
   watch(() => settings.value.enableVolumeNormalization, (enabled) => {
     if (enabled) {
       injectControl()
+      startInjectionPolling()
     }
     else {
+      stopInjectionPolling()
       removeControl()
     }
   }, { immediate: true })
@@ -326,17 +356,4 @@ export function initVolumeNormalizationControl() {
       }
     }
   })
-
-  // 定期检查并注入（处理 SPA 页面切换）
-  let lastUrl = location.href
-  setInterval(() => {
-    if (location.href !== lastUrl) {
-      lastUrl = location.href
-      isInjected = false
-    }
-
-    if (settings.value.enableVolumeNormalization && !isInjected) {
-      injectControl()
-    }
-  }, 2000)
 }

@@ -391,9 +391,18 @@ export function setupNecessarySettingsWatchers() {
     const bewlyHost = document.getElementById('bewly')
     const shadow = bewlyHost?.shadowRoot
     if (shadow) {
-      const observer = new MutationObserver(() => {
-        applyOuterTopBarPolicy()
-      })
+      // Coalesce mutation bursts into a single rAF callback. Without this, every
+      // Vue render inside the shadow root re-invokes the policy synchronously.
+      let pendingRaf: number | null = null
+      const scheduleApply = () => {
+        if (pendingRaf !== null)
+          return
+        pendingRaf = requestAnimationFrame(() => {
+          pendingRaf = null
+          applyOuterTopBarPolicy()
+        })
+      }
+      const observer = new MutationObserver(scheduleApply)
       observer.observe(shadow, { childList: true, subtree: true, attributes: true, attributeFilter: ['src'] })
     }
   }
